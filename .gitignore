@@ -1,0 +1,21 @@
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local scratch files, archives, and legacy application files
+github-pages/
+__pycache__/
+*.py[cod]
+*.log
+*.tmp
+*.bak
+*.zip
+
+# Personal test images should remain local; keep the three bundled samples.
+/images/*
+!/images/Prism_Primary_Flight_Gradient_BT709.exr
+!/images/Prism_Primary_Flight_Gradient_DCI_P3.exr
+!/images/Prism_Primary_Flight_Gradient_BT2020.exr
