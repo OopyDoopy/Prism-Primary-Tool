@@ -65,6 +65,6 @@
   document.addEventListener('input',event=>{if(event.target.matches('input[id],select[id]'))schedule();});
   document.addEventListener('change',event=>{if(event.target.matches('input[id],select[id]'))schedule();});
   // Presets and group resets update controls programmatically.
-  document.addEventListener('click',event=>{if(event.target.closest('button[data-gamut],button.resetPrimary,#example1,#example2,#resetAuthor,#resetGrade,button.resetSlider'))schedule();});
+  document.addEventListener('click',event=>{if(event.target.closest('button[data-gamut],button.resetPrimary,#exampleNatural,#exampleAgxLike,#resetAuthor,#resetGrade,#presetNatural,#presetAgxLike,#resetAll,button.resetSlider'))schedule();});
   window.addEventListener('pagehide',()=>{if(timer){clearTimeout(timer);save();}});
 })();

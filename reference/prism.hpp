@@ -528,6 +528,12 @@ struct AuthoringConfig {
   float outset_blue_purity = 0.f;
 
   float strength = 1.f;
+
+  // Independent outset hue offsets relative to the inset primary hues.
+  // The outset shares the authored white point and tint with the inset.
+  float outset_red_hue_degrees = 0.f;
+  float outset_green_hue_degrees = 0.f;
+  float outset_blue_hue_degrees = 0.f;
 };
 
 // 16-byte row packing matches the float4 cbuffer fields and gives explicit
@@ -631,6 +637,7 @@ inline Vec2 AuthorOutsetPrimary(
     Vec2 white,
     double global_hue,
     double primary_hue,
+  double outset_hue,
     double purity,
     double strength,
     double hue_limit,
@@ -639,8 +646,9 @@ inline Vec2 AuthorOutsetPrimary(
     Vec2 gamut_g,
     Vec2 gamut_b) {
   const double coherent_hue = global_hue * strength;
-  const double independent_hue = std::clamp(
-      primary_hue * strength, -hue_limit, hue_limit);
+    const double inset_hue = std::clamp(primary_hue * strength, -hue_limit, hue_limit);
+    const double independent_hue = std::clamp(
+      inset_hue + outset_hue * strength, -hue_limit, hue_limit);
   const double outset_reach = std::clamp(
       1.0 - purity * std::max(strength, 0.0),
       0.05,
@@ -797,10 +805,11 @@ inline ResolvedConfig Resolve(const AuthoringConfig& config) {
   const Vec2 green = author_primary(gamut_g, config.green_reach, config.green_hue_degrees);
   const Vec2 blue = author_primary(gamut_b, config.blue_reach, config.blue_hue_degrees);
 
-  const Vec2 outset_red = config.transform_mode == PrimaryTransformMode::AGX_INSET_OUTSET
+    const Vec2 outset_red = config.transform_mode == PrimaryTransformMode::AGX_INSET_OUTSET
       ? AuthorOutsetPrimary(
             gamut_r, white,
             config.global_hue_degrees, config.red_hue_degrees,
+        config.outset_red_hue_degrees,
             config.outset_red_purity, config.strength, hue_limit,
             signed_primary_basis, gamut_r, gamut_g, gamut_b)
       : red;
@@ -808,6 +817,7 @@ inline ResolvedConfig Resolve(const AuthoringConfig& config) {
       ? AuthorOutsetPrimary(
             gamut_g, white,
             config.global_hue_degrees, config.green_hue_degrees,
+        config.outset_green_hue_degrees,
             config.outset_green_purity, config.strength, hue_limit,
             signed_primary_basis, gamut_r, gamut_g, gamut_b)
       : green;
@@ -815,6 +825,7 @@ inline ResolvedConfig Resolve(const AuthoringConfig& config) {
       ? AuthorOutsetPrimary(
             gamut_b, white,
             config.global_hue_degrees, config.blue_hue_degrees,
+        config.outset_blue_hue_degrees,
             config.outset_blue_purity, config.strength, hue_limit,
             signed_primary_basis, gamut_r, gamut_g, gamut_b)
       : blue;
@@ -846,9 +857,8 @@ inline ResolvedConfig Resolve(const AuthoringConfig& config) {
     const Mat3 reference_to_bt709 = Mul(kXYZToBT709, reference_to_xyz);
 
     const Mat3 agx_inset = Mul(xyz_to_reference, authored_to_xyz);
-    const Mat3 agx_outset = Mul(Inverse(authored_outset_to_xyz), reference_to_xyz);
-
     inset = Mul(agx_inset, bt709_to_reference);
+    const Mat3 agx_outset = Mul(Inverse(authored_outset_to_xyz), reference_to_xyz);
     outset = Mul(reference_to_bt709, agx_outset);
 
     // Chroma/XYZ Y operations need the actual coordinate interpretation of the

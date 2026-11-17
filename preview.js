@@ -29,7 +29,7 @@
   uniform mat3 uSrc709, uInset, uOutset, uWorkingToLMS, uLMSToWorking;
   uniform vec3 uYWeights, uNeutral;
   uniform float uNeutralInvY;
-  uniform vec4 uGrade0; // saturation, highlight saturation, blowout, diffuse white nits
+  uniform vec4 uGrade0; // saturation, highlight saturation, blowout, unused
   uniform vec4 uGrade1; // anchor in, anchor out, contrast, flare
   uniform vec4 uGrade2; // highlight contrast, shadow contrast, highlights, shadows
   uniform int uToneMapper;
@@ -53,8 +53,9 @@
   vec3 chromaScale(vec3 c, float amount) {
     vec3 neutral = yNeutral(xyzY(c));
     vec3 direction = c - neutral;
-    // Preserve out-of-hull inputs; limit increases only from inside the hull.
-    if (amount > 1.0 && all(greaterThanEqual(c,vec3(0.0))) && all(greaterThanEqual(neutral,vec3(0.0)))) {
+    // Outside the hull, retain the original chroma rather than abruptly
+    // switching from a limited increase to an unlimited one.
+    if (amount > 1.0 && all(greaterThanEqual(neutral,vec3(0.0)))) {
       float boundary=1e30;
       for(int i=0;i<3;i++) if(direction[i]<0.0) boundary=min(boundary,neutral[i]/(-direction[i]));
       if(boundary<1e29) {
@@ -177,17 +178,18 @@
     return sign(x) * contrasted * anchorOut;
   }
   float shoulderOne(float x) {
+    float magnitude=abs(x);
     float anchor=uGrade1.y;
     float peak=max(uCurve.x,anchor+0.000001);
     float clip=max(uWhiteClip,peak+max(peak*0.000001,0.000001));
-    if(x<=anchor) return x;
-    if(x>=clip) return peak;
-    float range=peak-anchor, clipRange=clip-anchor, distance=x-anchor;
+    if(magnitude<=anchor) return x;
+    if(magnitude>=clip) return sign(x)*peak;
+    float range=peak-anchor, clipRange=clip-anchor, distance=magnitude-anchor;
     float inversePosition=range*(clipRange-distance)/((clip-peak)*distance);
     float weight=exp2(-inversePosition/max(uCurve.y,1.0));
     float denom=weight+inversePosition;
     float transition=denom>0.0 ? (distance/clipRange)*(weight/denom) : 1.0;
-    return x+(peak-clip)*transition;
+    return sign(x)*(magnitude+(peak-clip)*transition);
   }
   vec3 zeroNaN(vec3 value) {
     return mix(value,vec3(0.0),isnan(value));
@@ -211,11 +213,13 @@
     float transition=1.0/(1.0+exp2((1.0-2.0*t)/(t*(1.0-t))));
     return mix(nearZero,mapped,transition);
   }
-  vec3 compressPrismGamut(vec3 working, float anchor) {
-    vec3 output709=uOutset*working;
+  vec3 compressPrismGamut(vec3 output709) {
     vec3 target=uPrismTarget*output709;
     float peak=max(uCurve.x,0.000001);
-    anchor=clamp(anchor,0.0,peak);
+    // Use target-space positive light for the anchor. Unlike clipping BT.709,
+    // this leaves the anchor unchanged for every color inside the target gamut.
+    vec3 positive709=uTargetTo709*max(target,vec3(0.0));
+    float anchor=clamp(dot(positive709,vec3(0.2126390059,0.7151686788,0.0721923154)),0.0,peak);
     vec3 delta=target-vec3(anchor);
     // Radial L8 demand against both faces of the target display gamut.
     vec3 demand3=max(max(-delta,vec3(0.0))/max(anchor,1e-8),
@@ -229,17 +233,6 @@
     }
     return uTargetTo709*clamp(target,0.0,peak);
   }
-  // Match RenoDX's SanitizeGamutInput in Prism's inset basis. This only moves
-  // negative-Y values to the Y=0 boundary; it must not gamut-compress every
-  // channel below neutral before each grading stage.
-  vec3 sanitizeInsetForGrading(vec3 c) {
-    float y=xyzY(c);
-    if(y>=0.0) return c;
-    vec3 positive=max(c,vec3(0.0));
-    float positiveY=xyzY(positive);
-    float scale=positiveY/(positiveY-y);
-    return positive+(c-positive)*scale;
-  }
   float prismYHighlightRolloff(vec3 c) {
     float luminance=max(xyzY(c),0.0);
     float anchorY=max(xyzY(vec3(uGrade1.x)),E);
@@ -251,11 +244,8 @@
     float highlightRolloff=rolloff*rolloff*(0.5*rolloff+0.5);
     return 1.0+(uGrade0.y-1.0)*highlightRolloff*(2.0/3.0);
   }
-  vec3 prismMap(vec3 input709) {
-    vec3 c=uInset*input709;
-    float gamutInputY=max(xyzY(max(c,vec3(0.0))),0.0);
-    if(uPrismGamut==1) c=sanitizeInsetForGrading(c);
-    // Select from the sanitized signal using Prism XYZ Y.
+  vec3 prismGradeOnly(vec3 c) {
+    // Preserve signed formation values until the output gamut mapping stage.
     float highlightRolloff=prismYHighlightRolloff(c);
     float highlightScale=prismYHighlightSatScale(highlightRolloff);
     if (uGrade0.x != 1.0) c=chromaScaleSelected(c,uGrade0.x,uChromaSpace);
@@ -271,16 +261,16 @@
         c=chromaScale(c,availability);
       }
     }
-    // Sanitize only if chroma grading made Prism Y negative.
-    if(uPrismGamut==1 && xyzY(c)<0.0) c=sanitizeInsetForGrading(c);
-    float gamutAnchor=shoulderOne(tonalOne(gamutInputY*uNeutralInvY));
     c=vec3(tonalOne(c.r),tonalOne(c.g),tonalOne(c.b));
-    // Per-channel tonal grading can push saturated colors back toward the inset boundary.
-    if(uPrismGamut==1) c=sanitizeInsetForGrading(c);
+    return c;
+  }
+  vec3 prismMap(vec3 input709) {
+    if(uPrismGamut==2) input709=uTargetTo709*max(uPrismTarget*input709,vec3(0.0));
+    vec3 c=prismGradeOnly(uInset*input709);
     c=vec3(shoulderOne(c.r),shoulderOne(c.g),shoulderOne(c.b));
     // Match RenoDX math::ZeroNaN: clear NaNs per channel after the outset.
     vec3 output709=uOutset*c;
-    if(uPrismGamut==1) output709=compressPrismGamut(c,gamutAnchor);
+    if(uPrismGamut==1) output709=compressPrismGamut(output709);
     else if(uPrismGamut==2) output709=uTargetTo709*clamp(uPrismTarget*output709,0.0,max(uCurve.x,0.000001));
     return zeroNaN(output709);
   }
@@ -298,7 +288,10 @@
   }
   float hableOne(float x) { float A=.15,B=.50,C=.10,D=.20,E1=.02,F=.30; return ((x*(A*x+C*B)+D*E1)/(x*(A*x+B)+D*F))-E1/F; }
   vec3 toneMapOther(vec3 c) {
-    if(uToneMapper==1) return uCurve.x*vec3(hableOne(max(c.r,0.0)),hableOne(max(c.g,0.0)),hableOne(max(c.b,0.0)))/hableOne(uHableWhite);
+    if(uToneMapper==1) {
+      vec3 x=2.0*max(c,vec3(0.0));
+      return uCurve.x*vec3(hableOne(x.r),hableOne(x.g),hableOne(x.b))/hableOne(uHableWhite);
+    }
     if(uToneMapper==2) { float y=dot(c,vec3(.2126390059,.7151686788,.0721923154)); return y>0.0 ? c*(uCurve.x/(1.0+y)) : vec3(0.0); }
     if(uToneMapper==5) return zeroNaN(psycho35(c));
     vec3 q=uToneMapper==4 ? uToEGamut*c : c;
@@ -318,9 +311,9 @@
     vec3 chosen=vUV.x < uSplit ? raw : formed;
     vec3 target=uGamutMatrix*chosen;
     bool outOfGamut=uGamutWarning==1 && (any(lessThan(target,vec3(-0.00001))) || any(greaterThan(target,vec3(uCurve.x+0.00001))));
-    outColor=uOutputLinear == 1 ? vec4(chosen*uGrade0.w,1.0) : vec4(clamp(encodeSRGB(chosen),vec3(0.0),vec3(1.0)),1.0);
-    if(outOfGamut) outColor.rgb=uOutputLinear == 1 ? vec3(1.0,0.01764,0.0835)*uGrade0.w : vec3(1.0,0.14,0.32);
-    if (uSplit>0.0 && uSplit<1.0 && abs(vUV.x-uSplit)<0.0015) outColor.rgb=uOutputLinear == 1 ? vec3(1.0,0.6383,0.05925)*uGrade0.w : vec3(1.0,0.82,0.27);
+    outColor=uOutputLinear == 1 ? vec4(chosen,1.0) : vec4(clamp(encodeSRGB(chosen),vec3(0.0),vec3(1.0)),1.0);
+    if(outOfGamut) outColor.rgb=uOutputLinear == 1 ? vec3(1.0,0.01764,0.0835) : vec3(1.0,0.14,0.32);
+    if (uSplit>0.0 && uSplit<1.0 && abs(vUV.x-uSplit)<0.0015) outColor.rgb=uOutputLinear == 1 ? vec3(1.0,0.6383,0.05925) : vec3(1.0,0.82,0.27);
   }`;
 
   function makeShader(type, src) {
@@ -419,20 +412,7 @@
     el.className=(selected==='auto'&&info.warning)||manualWarning?'warn':'muted';
   }
   const mat=(m)=>new Float32Array([m[0],m[3],m[6],m[1],m[4],m[7],m[2],m[5],m[8]]);
-  let hdr=null, hdrRequest=0, hdrReferenceNits=null, whitePolling=false;
-  window.prismDetectedPeak=1000;
-  window.prismDetectedDiffuse=203;
-  const systemWhite=()=>Math.max(1,Math.min(10000,Number($('systemWhiteNits').value)||203));
-  const refreshPeak=()=>{};
-  $('systemWhiteSlider').addEventListener('input',()=>{$('systemWhiteNits').value=$('systemWhiteSlider').value;window.updatePrismPreview()});
-  $('systemWhiteNits').addEventListener('input',()=>{$('systemWhiteSlider').value=systemWhite();window.updatePrismPreview()});
-  $('peakMode').addEventListener('change',()=>updateAll());
-  $('detectHeadroom').addEventListener('click',async()=>{
-    const out=$('browserCalibrationStatus');
-    if(typeof window.getScreenDetails!=='function'){out.textContent='This browser does not expose HDR headroom; enter peak manually.';return;}
-    try {const screens=await window.getScreenDetails();const ratio=Number(screens.currentScreen?.highDynamicRangeHeadroom);if(!Number.isFinite(ratio)||ratio<=1||ratio>100)throw Error('HDR headroom is unavailable on this browser or display.');const estimated=Math.min(10000,Math.round(systemWhite()*ratio));$('hdrPeakNits').value=estimated;$('hdrPeakSlider').value=estimated;out.textContent=`Estimated peak: ${estimated} nits (${ratio.toFixed(2)}× entered system SDR white). This is not a calibration reading.`;updateAll();}
-    catch(e){out.textContent=(e.name==='NotAllowedError'?'Screen permission was not granted.':e.message)+' Enter peak manually.';}
-  });
+  let hdr=null, hdrRequest=0;
   const hdrCanvas=$('hdrCanvas');
   const hdrStatus=$('hdrStatus');
   function releaseHDR() {
@@ -445,25 +425,22 @@
     hdr=null;
   }
   function sdrFallback(message) {
-    ++hdrRequest; releaseHDR(); $('outputMode').value='sdr';
+    ++hdrRequest;releaseHDR(); $('outputMode').value='sdr';
     cnv.hidden=false; hdrCanvas.hidden=true;
-    $('sdrPeakControl').hidden=true; $('hdrDiffuseControl').hidden=true; $('hdrPeakControl').hidden=true;
+    $('sdrPeakControl').hidden=true; $('hdrPeakControl').hidden=true;
     hdrStatus.textContent=message; hdrStatus.className='warn'; updateAll();
   }
   async function selectOutput() {
     const request=++hdrRequest;
     if ($('outputMode').value==='sdr') {
       releaseHDR(); cnv.hidden=false; hdrCanvas.hidden=true;
-      $('sdrPeakControl').hidden=true; $('hdrDiffuseControl').hidden=true; $('hdrPeakControl').hidden=true;
+      $('sdrPeakControl').hidden=true; $('hdrPeakControl').hidden=true;
       hdrStatus.textContent='SDR output active.'; hdrStatus.className='muted'; updateAll(); return;
     }
     $('sdrPeakControl').hidden=true;
-    hdrStatus.textContent='Checking HDR display and browser support…'; hdrStatus.className='muted'; updateAll(); refreshPeak();
+    hdrStatus.textContent='Checking HDR display and browser support…'; hdrStatus.className='muted'; updateAll();
     let device;
     try {
-      hdrReferenceNits=systemWhite();
-      if (request!==hdrRequest) return;
-      window.prismDetectedDiffuse=hdrReferenceNits;updateAll();
       if (!window.matchMedia('(dynamic-range: high)').matches) throw Error('The browser does not report an HDR-capable display. Enable HDR in your operating system and use an HDR display.');
       if (!navigator.gpu) throw Error('This browser does not provide WebGPU.');
       if (!gl.getExtension('EXT_color_buffer_float')) throw Error('Floating-point WebGL rendering is unavailable.');
@@ -498,7 +475,7 @@
       hdr={device,context,layout,pipeline,params,width:0,height:0};
       device.lost.then(info=>{if(hdr && hdr.device===device) sdrFallback('HDR output stopped: '+info.message+' SDR output restored.');});
       cnv.hidden=true; hdrCanvas.hidden=false; hdrStatus.className='good';
-      hdrStatus.textContent=`HDR extended-range output active · manual system SDR white ${hdrReferenceNits.toFixed(1)} nits. Actual luminance depends on display calibration.`;
+      hdrStatus.textContent='HDR extended-range output active · nominal SDR white is 1.0; actual luminance depends on the system and display.';
       updateAll();
     } catch(e) {
       if (device) device.destroy();
@@ -530,9 +507,7 @@
     gl.readPixels(0,0,w,height,gl.RGBA,gl.FLOAT,h.pixels);
     gl.pixelStorei(gl.PACK_ROW_LENGTH,0); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     h.device.queue.writeTexture({texture:h.source},h.pixels,{bytesPerRow:h.pitch,rowsPerImage:height},[w,height]);
-    hdrReferenceNits=systemWhite();
-    const ref=hdrReferenceNits;
-    h.device.queue.writeBuffer(h.params,0,new Float32Array([1/ref,0,0,0]));
+    h.device.queue.writeBuffer(h.params,0,new Float32Array([1,0,0,0]));
     const encoder=h.device.createCommandEncoder();
     const pass=encoder.beginRenderPass({colorAttachments:[{view:h.context.getCurrentTexture().createView(),loadOp:'clear',storeOp:'store',clearValue:{r:0,g:0,b:0,a:1}}]});
     pass.setPipeline(h.pipeline); pass.setBindGroup(0,h.bind); pass.draw(3); pass.end(); h.device.queue.submit([encoder.finish()]);
@@ -589,7 +564,7 @@
       gl.uniform3fv(u.uYWeights,new Float32Array(weights));
       gl.uniform3fv(u.uNeutral,new Float32Array(neutral));
       gl.uniform1f(u.uNeutralInvY,neutralInv);
-      gl.uniform4f(u.uGrade0,g.saturation,g.highlightSat,g.dechroma,g.diffuseWhite);
+      gl.uniform4f(u.uGrade0,g.saturation,g.highlightSat,g.dechroma,0);
       gl.uniform4f(u.uGrade1,g.anchorIn,g.anchorOut,g.contrast,g.flare);
       gl.uniform4f(u.uGrade2,g.highlightContrast,g.shadowContrast,g.highlights,g.shadows);
       gl.uniform3f(u.uCurve,peak,Math.max(1,Number($('compression').value)||1),exp);
@@ -609,7 +584,7 @@
       if (hdr) {
         const target=previewPeak();
         const tooLow=(tone===0||tone===5)&&target<=aOut;
-        hdrStatus.textContent=tooLow?'HDR peak is at or below the grading anchor; the effective shoulder peak has been raised above the anchor.':`HDR extended-range output active · manual system SDR white ${hdrReferenceNits.toFixed(1)} nits. Actual luminance depends on display calibration.`;
+        hdrStatus.textContent=tooLow?'HDR peak is at or below the grading anchor; the effective shoulder peak has been raised above the anchor.':'HDR extended-range output active · nominal SDR white is 1.0; actual luminance depends on the system and display.';
         hdrStatus.className=tooLow?'warn':'good';
         renderHDR();
       }

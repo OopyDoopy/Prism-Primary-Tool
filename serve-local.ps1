@@ -21,7 +21,7 @@ try {
       if ([string]::IsNullOrWhiteSpace($line)) { continue }
       do { $header = $reader.ReadLine() } while ($null -ne $header -and $header -ne '')
       $parts = $line.Split(' ')
-      $code = 200; $message = 'OK'; $body = $null; $file = $null
+      $code = 200; $message = 'OK'; $body = $null; $file = $null; $contentType = $null
       if ($parts.Length -lt 2 -or $parts[0] -notin @('GET', 'HEAD')) {
         $code = 405; $message = 'Method Not Allowed'
       } else {
@@ -45,11 +45,12 @@ try {
           default { 'application/octet-stream' }
         }
         $length = $file.Length
-      } else {
+      } elseif ($null -eq $body) {
         $contentType = 'text/plain; charset=utf-8'
         $body = [Text.Encoding]::UTF8.GetBytes($message)
         $length = $body.Length
       }
+      if ($null -ne $body) { $length = $body.Length }
       $response = "HTTP/1.1 $code $message`r`nContent-Type: $contentType`r`nContent-Length: $length`r`nCache-Control: no-store`r`nX-Content-Type-Options: nosniff`r`nConnection: close`r`n`r`n"
       $bytes = [Text.Encoding]::ASCII.GetBytes($response)
       $stream.Write($bytes, 0, $bytes.Length)

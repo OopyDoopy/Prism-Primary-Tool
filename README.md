@@ -12,7 +12,7 @@ EXRs are decoded to float in a worker using Three.js EXRLoader (0.180.0), with a
 
 ## HDR
 
-Select HDR extended range for supported browsers and HDR displays. Set peak, diffuse white, and **System SDR white** manually; the latter must match your system's SDR content brightness in nits. Browser APIs do not generally expose the Windows HDR calibration and SDR white values read by the local Windows helper. The optional **Detect HDR headroom** button requests screen permission and, when the browser exposes the experimental headroom value, estimates peak as entered system SDR white times headroom. This is an estimate, not an HDR calibration reading. When unavailable or declined, enter peak manually. Browser, operating system, compositor, and display determine actual HDR output. An HDR-capable display, WebGL floating point, and WebGPU extended-range canvas are required. PNG export is SDR.
+Select HDR extended range for supported browsers and HDR displays. Nominal diffuse white is relative linear 1.0, corresponding to browser SDR white. The HDR peak control sets the tone-mapping target in stops above that white; its default of 2.3 stops is approximately 4.92 times SDR white. This is a relative target, not a measurement of the display's peak: browser, operating system, compositor, and display determine actual output and may limit highlights. The separate Exposure control adjusts the image input. An HDR-capable display, WebGL floating point, and WebGPU extended-range canvas are required. PNG export is SDR.
 
 This static edition does not read Windows HDR calibration or automatically scan local image folders.
 

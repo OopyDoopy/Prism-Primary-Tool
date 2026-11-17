@@ -42,12 +42,12 @@ const PRESET_WHITE={d65:[.3127,.3290],d60:[.32168,.33767],d55:[.33242,.34743],d5
 const GAMUTS={bt709:P709,p3:PP3,bt2020:P2020,ap1:PAP1};
 function getLMSChromas(){const rgbXyz=m3mul(M709XYZ,LMS_TO_BT709);const axis=k=>xyzToXy([rgbXyz[k],rgbXyz[k+3],rgbXyz[k+6]]);return {r:axis(0),g:axis(1),b:axis(2),w:P709.w}}
 GAMUTS.lms=getLMSChromas();
-const AUTHOR_IDS=['strength','globalReach','globalHue','rReach','rHue','gReach','gHue','bReach','bHue','outsetR','outsetG','outsetB','temperature','tint'];
-const GRADE_IDS=['saturation','highlightSat','dechroma','diffuseWhite','anchorIn','anchorOut','contrast','deepShadowV2','highlightContrast','shadowContrast','highlights','shadows'];
+const AUTHOR_IDS=['strength','globalReach','globalHue','rReach','rHue','gReach','gHue','bReach','bHue','outsetR','outsetG','outsetB','outsetRHue','outsetGHue','outsetBHue','temperature','tint'];
+const GRADE_IDS=['saturation','highlightSat','dechroma','anchorIn','anchorOut','contrast','deepShadowV2','highlightContrast','shadowContrast','highlights','shadows'];
 const PSY_IDS=['psyHighlights','psyShadows','psyContrast','psyPurity','psyConeExponent','psyGamutAmount','psyCompression','psyAnchorIn','psyAnchorOut','psyFitPower'];
 const ALL_PAIRS=[...AUTHOR_IDS,...GRADE_IDS,...PSY_IDS];
-function controlsPrimary(){return {gamut:$('authorGamut').value,mode:$('transformMode').value,unbounded:$('extrapolate').checked,kelvin:+$('temperature').value,tint:+$('tint').value,strength:+$('strength').value,globalReach:+$('globalReach').value,globalHue:+$('globalHue').value,rReach:+$('rReach').value,rHue:+$('rHue').value,gReach:+$('gReach').value,gHue:+$('gHue').value,bReach:+$('bReach').value,bHue:+$('bHue').value,purity:{r:+$('outsetR').value,g:+$('outsetG').value,b:+$('outsetB').value}}}
-function controlsGrade(){return {saturation:+$('saturation').value,highlightSat:+$('highlightSat').value,dechroma:+$('dechroma').value,diffuseWhite:$('outputMode').value==='hdr'?Math.max(1,Math.min(10000,$('peakMode').value==='auto'?(window.prismDetectedDiffuse||203):(Number($('diffuseWhiteN').value)||203))):203,anchorIn:+$('anchorIn').value,anchorOut:+$('anchorOut').value,contrast:+$('contrast').value,flare:clamp(+$('deepShadowV2').value,0,1)**5,highlightContrast:+$('highlightContrast').value,shadowContrast:+$('shadowContrast').value,highlights:+$('highlights').value,shadows:+$('shadows').value}}
+function controlsPrimary(){return {gamut:$('authorGamut').value,mode:$('transformMode').value,unbounded:$('extrapolate').checked,kelvin:+$('temperature').value,tint:+$('tint').value,strength:+$('strength').value,globalReach:+$('globalReach').value,globalHue:+$('globalHue').value,rReach:+$('rReach').value,rHue:+$('rHue').value,gReach:+$('gReach').value,gHue:+$('gHue').value,bReach:+$('bReach').value,bHue:+$('bHue').value,purity:{r:+$('outsetR').value,g:+$('outsetG').value,b:+$('outsetB').value},outsetHue:{r:+$('outsetRHue').value,g:+$('outsetGHue').value,b:+$('outsetBHue').value}}}
+function controlsGrade(){return {saturation:+$('saturation').value,highlightSat:+$('highlightSat').value,dechroma:+$('dechroma').value,anchorIn:+$('anchorIn').value,anchorOut:+$('anchorOut').value,contrast:+$('contrast').value,flare:clamp(+$('deepShadowV2').value,0,1)**5,highlightContrast:+$('highlightContrast').value,shadowContrast:+$('shadowContrast').value,highlights:+$('highlights').value,shadows:+$('shadows').value}}
 const AXIS_MIXES={r:[1,0,0],g:[0,1,0],b:[0,0,1],y:[1,1,0],c:[0,1,1],m:[1,0,1]};
 const AXIS_COLORS={r:'#ff6262',g:'#62e887',b:'#6d8fff',y:'#f4db4c',c:'#4de3d2',m:'#ed54bf'};
 function axisGeometry(matrix){const xyz={r:[matrix[0],matrix[3],matrix[6]],g:[matrix[1],matrix[4],matrix[7]],b:[matrix[2],matrix[5],matrix[8]]};for(const k of ['y','c','m']){const mix=AXIS_MIXES[k];xyz[k]=[0,1,2].map(i=>xyz.r[i]*mix[0]+xyz.g[i]*mix[1]+xyz.b[i]*mix[2])}return {xyz,xy:Object.fromEntries(Object.entries(xyz).map(([k,v])=>[k,xyzToXy(v)]))}}
@@ -60,8 +60,7 @@ function buildPrism(){
  const primaryHue=k=>hue0+clamp(c[k+'Hue']*c.strength,-limit,limit);
  function primaryAt(k,hue,reach){if(signedBasis){const d=rotate(V(base[k],w),hue);return plus(w,mul(d,reach))}const d=rotate(norm(V(base[k],w)),hue),tip=boundary(w,d,base);return plus(w,mul(V(tip,w),reach))}
  const xy={r:primaryAt('r',primaryHue('r'),primaryReach('r')),g:primaryAt('g',primaryHue('g'),primaryReach('g')),b:primaryAt('b',primaryHue('b'),primaryReach('b'))};
- const finalHue={r:primaryHue('r'),g:primaryHue('g'),b:primaryHue('b')};
- function outsetPrimary(k){if(!isAGX)return xy[k];const reach=clamp(1-c.purity[k]*Math.max(0,c.strength),.05,2);if(signedBasis){const d=rotate(V(base[k],w),finalHue[k]);return plus(w,mul(d,reach))}const d=rotate(norm(V(base[k],w)),finalHue[k]),tip=boundary(w,d,base);return plus(w,mul(V(tip,w),reach))}
+ function outsetPrimary(k){if(!isAGX)return xy[k];const reach=clamp(1-c.purity[k]*Math.max(0,c.strength),.05,2),hue=hue0+clamp(clamp(c[k+'Hue']*c.strength,-limit,limit)+c.outsetHue[k]*c.strength,-limit,limit);if(signedBasis){const d=rotate(V(base[k],w),hue);return plus(w,mul(d,reach))}const d=rotate(norm(V(base[k],w)),hue),tip=boundary(w,d,base);return plus(w,mul(V(tip,w),reach))}
  const outsetXY={r:outsetPrimary('r'),g:outsetPrimary('g'),b:outsetPrimary('b')};
  const authored=rgb2xyz(xy,w),reference=rgb2xyz(base,w),outsetAuthor=rgb2xyz(outsetXY,w),axes=axisGeometry(authored),referenceAxes=axisGeometry(reference);
  let inset,outset,formationTo709;
@@ -75,11 +74,38 @@ function buildPrism(){
 function validConfig(p){for(const m of [p.inset,p.outset,p.w2lms,p.lms2w])if(m.some(v=>!Number.isFinite(v)))throw Error('Non-finite transform');if(Math.abs(det3(p.inset))<1e-7||Math.abs(det3(p.outset))<1e-7)throw Error('Near-singular transform')}
 function setGamut(id){$('authorGamut').value=id;markAuthorCustom();updateAll()}
 function setWhitePreset(id){if(!PRESET_WHITE[id])return;const [k,t]=id==='d65'?[6501.7344,.0031730535]:xyToTempTint(PRESET_WHITE[id]);$('temperature').value=k.toFixed(4);$('tint').value=t.toFixed(10);syncAllNumbers();updateAll()}
-function resetAuthor(){const values={strength:1,globalReach:1,globalHue:0,rReach:1,rHue:0,gReach:1,gHue:0,bReach:1,bHue:0,outsetR:0,outsetG:0,outsetB:0,temperature:6501.7344,tint:.0031730535};for(const [id,val] of Object.entries(values))$(id).value=val;$('authorGamut').value='bt709';$('transformMode').value='agx';$('extrapolate').checked=false;$('whitePreset').value='d65';$('presetBadge').textContent='BT.709';syncAllNumbers();updateAll()}
-function applyPrimaryExample(values){resetAuthor();for(const [id,val] of Object.entries(values))$(id).value=val;syncAllNumbers();updateAll()}
-function applyExample1(){applyPrimaryExample({rReach:.71,rHue:7.9,gReach:.715,gHue:-13,bReach:.83,bHue:-.1})}
-function applyExample2(){applyPrimaryExample({rReach:.88,rHue:.65,gReach:.88,gHue:0,bReach:.9,bHue:-.4})}
-function resetGrade(){const values={saturation:1,highlightSat:1,dechroma:0,diffuseWhite:203,anchorIn:.18,anchorOut:.18,contrast:1,deepShadowV2:0,highlightContrast:1,shadowContrast:1,highlights:1,shadows:1};for(const [id,val] of Object.entries(values))$(id).value=val;$('chromaSpace').value='mb';$('contrastMode').value='anchored';syncAllNumbers();updateAll()}
+function resetAuthor(){const values={strength:1,globalReach:1,globalHue:0,rReach:1,rHue:0,gReach:1,gHue:0,bReach:1,bHue:0,outsetR:0,outsetG:0,outsetB:0,outsetRHue:0,outsetGHue:0,outsetBHue:0,temperature:6501.7344,tint:.0031730535};for(const [id,val] of Object.entries(values))$(id).value=val;$('authorGamut').value='bt709';$('transformMode').value='agx';$('extrapolate').checked=false;$('whitePreset').value='d65';$('presetBadge').textContent='BT.709';syncAllNumbers();updateAll()}
+const NATURAL_PRIMARIES={rReach:.5375,rHue:4.45,gReach:.605,gHue:4.45,bReach:.6325,bHue:-3.8,outsetR:.435,outsetG:.31,outsetB:.225};
+function applyNaturalPrimaries(){resetAuthor();$('authorGamut').value='bt2020';for(const [id,value] of Object.entries(NATURAL_PRIMARIES))$(id).value=value;syncAllNumbers();markAuthorCustom();updateAll()}
+function applyAgxLikePrimaries(){resetAuthor();$('authorGamut').value='bt2020';for(const [id,value] of Object.entries({rReach:.67,rHue:2.15,gReach:.72,gHue:-1.25,bReach:.875,bHue:-3.05,outsetR:.33,outsetG:.28,outsetB:.125}))$(id).value=value;syncAllNumbers();markAuthorCustom();updateAll()}
+function resetGrade(){const values={saturation:1,highlightSat:1,dechroma:0,anchorIn:.18,anchorOut:.18,contrast:1,deepShadowV2:0,highlightContrast:1,shadowContrast:1,highlights:1,shadows:1};for(const [id,val] of Object.entries(values))$(id).value=val;$('chromaSpace').value='yf';$('contrastMode').value='anchored';syncAllNumbers();updateAll()}
+function resetAllTuning(){
+ for(const el of document.querySelectorAll('.tuningControls input[id],.tuningControls select[id]')){
+  if(el.tagName==='SELECT'){const option=[...el.options].find(o=>o.defaultSelected)||el.options[0];el.value=option.value}
+  else if(el.type==='checkbox')el.checked=el.defaultChecked;
+  else el.value=el.defaultValue;
+ }
+ updateReachLimits();syncAllNumbers();markAuthorCustom();updateAll();
+}
+function applyNaturalPreset(){
+ resetAllTuning();
+ $('toneMapper').value='0';$('authorGamut').value='bt2020';$('transformMode').value='agx';$('extrapolate').checked=false;
+ $('whitePreset').value='d65';$('prismGamut').value='bt709';$('chromaSpace').value='yf';$('contrastMode').value='anchored';
+ updateReachLimits();
+ for(const [id,value] of Object.entries({...NATURAL_PRIMARIES,saturation:1,highlightSat:1,dechroma:0,highlights:1,highlightContrast:.7575,contrast:1.145,shadowContrast:.7925,shadows:.6625,deepShadowV2:0,anchorIn:.18,anchorOut:.125,exposure:0,compression:2,whiteClip:100}))$(id).value=value;
+ syncAllNumbers();
+ for(const [slider,number] of [['exposureSlider','exposure'],['compressionSlider','compression'],['whiteClipSlider','whiteClip']])$(slider).value=$(number).value;
+ markAuthorCustom();updateAll();
+}
+function applyAgxLikePreset(){
+ resetAllTuning();
+ $('toneMapper').value='0';$('authorGamut').value='bt2020';$('transformMode').value='agx';$('extrapolate').checked=false;
+ $('whitePreset').value='d65';$('prismGamut').value='bt709';$('chromaSpace').value='yf';$('contrastMode').value='anchored';
+ for(const [id,value] of Object.entries({rReach:.67,rHue:2.15,gReach:.72,gHue:-1.25,bReach:.875,bHue:-3.05,outsetR:.33,outsetG:.28,outsetB:.125,saturation:1,highlightSat:1,dechroma:0,highlights:.886,highlightContrast:.71,contrast:1.03,shadowContrast:.56,shadows:.72,deepShadowV2:0,anchorIn:.18,anchorOut:.175,exposure:0,compression:5,whiteClip:7.34}))$(id).value=value;
+ updateReachLimits();syncAllNumbers();
+ for(const [slider,number] of [['exposureSlider','exposure'],['compressionSlider','compression'],['whiteClipSlider','whiteClip']])$(slider).value=$(number).value;
+ markAuthorCustom();updateAll();
+}
 function markAuthorCustom(){$('presetBadge').textContent=$('authorGamut').selectedOptions[0].textContent}
 function syncAllNumbers(){for(const id of ALL_PAIRS){const n=$(id+'N'),r=$(id);if(n&&r)n.value=r.value}}
 function updateReachLimits(){const unbounded=$('extrapolate').checked||$('authorGamut').value==='lms';for(const k of ['globalReach','rReach','gReach','bReach']){$(k).max=unbounded?'2':'1';$(k+'N').max=unbounded?'2':'1';if(+$(k).value>+$(k).max){$(k).value=$(k).max;$(k+'N').value=$(k).value}}$('extrapolate').disabled=$('authorGamut').value==='lms';$('outsetGroup').hidden=$('transformMode').value!=='agx'}
@@ -104,7 +130,7 @@ function drawCIE(p){LAST_CIE_DATA=p;const c=$('ciePlot'),ctx=c.getContext('2d'),
  const white=camera({x:p.white[0],y:p.white[1],Y:1});ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(white.x,white.y,6,0,Math.PI*2);ctx.fill();ctx.fillStyle='#eef1f4';ctx.font='bold 20px system-ui';ctx.fillText('White',white.x+10,white.y-8);
  ctx.fillStyle='#c4ccd5';ctx.font='20px system-ui';ctx.fillText('CIE x',W-80,H-30);ctx.fillText('CIE y',22,H-48);ctx.save();ctx.translate(26,H*.48);ctx.rotate(-Math.PI/2);ctx.fillText('Luminance Y',0,0);ctx.restore();if(p.whiteConstrained){ctx.fillStyle='#ffc989';ctx.fillText('White point constrained to reference hull',W-390,28)}
 }
-function cinfinityShoulder(x,peak,anchor,compression,whiteClip){const clip=Math.max(whiteClip,peak+Math.max(peak*1e-6,1e-6));if(x<=anchor)return x;if(x>=clip)return peak;const range=peak-anchor,clipRange=clip-anchor,d=x-anchor,inv=range*(clipRange-d)/((clip-peak)*d),weight=2**(-inv/compression),denom=weight+inv,transition=denom>0?(d/clipRange)*(weight/denom):1;return x+(peak-clip)*transition}
+function cinfinityShoulder(x,peak,anchor,compression,whiteClip){const magnitude=Math.abs(x),clip=Math.max(whiteClip,peak+Math.max(peak*1e-6,1e-6));if(magnitude<=anchor)return x;if(magnitude>=clip)return Math.sign(x)*peak;const range=peak-anchor,clipRange=clip-anchor,d=magnitude-anchor,inv=range*(clipRange-d)/((clip-peak)*d),weight=2**(-inv/compression),denom=weight+inv,transition=denom>0?(d/clipRange)*(weight/denom):1;return Math.sign(x)*(magnitude+(peak-clip)*transition)}
 // Scalar port of the preview shader's tonal grading; x is a working-space channel.
 function curveTonalGrade(x,g,mode){
  const anchorIn=Math.max(g.anchorIn,1e-6),anchorOut=Math.max(g.anchorOut,0),E=1e-9;
@@ -134,7 +160,7 @@ function curveTonalGrade(x,g,mode){
  }
  return Math.sign(x)*contrasted*anchorOut;
 }
-function previewPeak(){const d=controlsGrade().diffuseWhite;return $('outputMode').value==='hdr'?Math.max(1,$('peakMode').value==='auto'?(window.prismDetectedPeak||1000):(Number($('hdrPeakNits').value)||1000))/d:1}
+function previewPeak(){const n=Number($('hdrPeakStops').value);return $('outputMode').value==='hdr'?2**clamp(Number.isFinite(n)?n:2.3,0,10):1}
 function drawCurve(){
  const c=$('curve'),ctx=c.getContext('2d'),W=c.width,H=c.height;
  const left=70,right=28,top=48,bottom=65,pw=W-left-right,ph=H-top-bottom;
@@ -160,7 +186,7 @@ function fmtM(m){return [0,1,2].map(r=>'  '+m.slice(r*3,r*3+3).map(v=>(v>=0?' ':
 function updateDiagnostics(p){const xyArea=o=>Math.abs(cross(V(o.g,o.r),V(o.b,o.r)))/2;const inside=Object.values(p.xy).every(v=>barycentric(v,p.base.r,p.base.g,p.base.b).every(x=>x>=-1e-6));const badges=[['Reference gamut',p.gamut.toUpperCase()],['Authoring mode',p.isAGX?'AgX-style':'Working basis'],['Primary locations',inside?'Inside reference hull':'Outside reference hull'],['White (xy)',p.white.map(x=>x.toFixed(6)).join(', ')],['White was constrained',p.whiteConstrained?'Yes':'No'],['Per-primary hue limit',p.hueLimit.toFixed(2)+'°'],['Inset determinant',det3(p.inset).toFixed(6)],['Outset determinant',det3(p.outset).toFixed(6)],['Area vs BT.709',(xyArea(p.xy)/xyArea(P709)).toFixed(3)+'×']];$('diagnostics').replaceChildren(...badges.map(([k,v])=>{const row=document.createElement('div');row.className='metric';const a=document.createElement('span');a.textContent=k;const b=document.createElement('b');b.textContent=v;row.append(a,b);return row}));$('primaryTable').innerHTML=[['r','Red'],['g','Green'],['b','Blue']].map(([k,name])=>`<tr><td>${name}</td><td>${p.xy[k][0].toFixed(6)}</td><td>${p.xy[k][1].toFixed(6)}</td><td>${p.outsetXY[k][0].toFixed(6)}</td><td>${p.outsetXY[k][1].toFixed(6)}</td></tr>`).join('');const names={r:'Red',g:'Green',b:'Blue',y:'Yellow',c:'Cyan',m:'Magenta'};$('axisTable').innerHTML=['r','g','b','y','c','m'].map(k=>{const actual=xyzToXy(p.axes.xyz[k]);return `<tr><td>${names[k]}</td><td>${actual[0].toFixed(5)}</td><td>${actual[1].toFixed(5)}</td><td>${p.axes.xyz[k][1].toFixed(4)}</td></tr>`}).join('')}
 
 function updateHlsl(p){const g=controlsGrade();$('matrixText').textContent=`// Prism CIE 1931 xy authoring — ${p.isAGX?'AgX-inspired independent inset/outset':'Working basis'}\n// Reference: ${p.gamut}, white xy: ${p.white.map(x=>x.toFixed(8)).join(', ')}\n// Pre-tone formation (BT.709 → formation)\nstatic const float3x3 PRISM_INSET = {\n${fmtM(p.inset)}\n};\n\n// Inset working RGB → XYZ (inverse inset, then BT.709 → XYZ)\nstatic const float3x3 PRISM_INSET_TO_XYZ = {\n${fmtM(m3mul(M709XYZ,p.formationTo709))}\n};\n\n// Post-tone formation (formation → BT.709)\nstatic const float3x3 PRISM_OUTSET = {\n${fmtM(p.outset)}\n};\n\n// XYZ Y weights (formation basis): ${p.yWeights.map(v=>v.toFixed(9)).join(', ')}\n// Neutral axis: ${p.neutral.map(v=>v.toFixed(9)).join(', ')}\n// 1 / neutral XYZ Y: ${p.neutralInv.toFixed(9)}\n// Prism grading: ${Object.entries(g).map(([k,v])=>k+'='+v).join(', ')}\n// chroma basis=${$('chromaSpace').value}\n// contrast function=${$('contrastMode').value}\n// Peak=${previewPeak().toFixed(6)} (relative to diffuse white), compression=${$('compression').value}, white clip=${$('whiteClip').value}`}
-function updateToneVisibility(){const tone=Number($('toneMapper').value);for(const el of document.querySelectorAll('.prismOnly'))el.hidden=tone!==0;$('prismCompressionControl').hidden=tone!==0;$('hableControls').hidden=tone!==1;$('psychoControls').hidden=tone!==5;const hdr=$('outputMode').value==='hdr';$('peakModeControl').hidden=true;$('systemWhiteControl').hidden=!hdr;$('hdrBrowserDetection').hidden=!hdr;$('peakDetected').hidden=!hdr||$('peakMode').value!=='auto';$('hdrDiffuseControl').hidden=!hdr||$('peakMode').value!=='manual';$('hdrPeakControl').hidden=!hdr||tone===3||tone===4||$('peakMode').value!=='manual';}
+function updateToneVisibility(){const tone=Number($('toneMapper').value);for(const el of document.querySelectorAll('.prismOnly'))el.hidden=tone!==0;$('prismCompressionControl').hidden=tone!==0;$('hableControls').hidden=tone!==1;$('psychoControls').hidden=tone!==5;const hdr=$('outputMode').value==='hdr';$('hdrPeakControl').hidden=!hdr||tone===3||tone===4;}
 function updateAll(){try{updateToneVisibility();updateReachLimits();const p=buildPrism();validConfig(p);updateDiagnostics(p);drawCIE(p);drawPurityPlot();drawCurve();updateHlsl(p);$('solverStatus').textContent='';$('solverStatus').className='good';if(window.updatePrismPreview)window.updatePrismPreview()}catch(e){$('solverStatus').textContent='Invalid authoring configuration: '+(e.message||e);$('solverStatus').className='bad';$('diagnostics').textContent=e.message||String(e);$('matrixText').textContent='Invalid primary configuration';console.warn(e)}}
 bindPairs();syncAllNumbers();
 // Reset each slider through its normal input handler so paired fields and plots stay in sync.
@@ -171,7 +197,7 @@ for(const slider of document.querySelectorAll('input[type="range"]')) {
  slider.insertAdjacentElement('afterend',button);
  button.addEventListener('click',()=>{slider.value=slider.defaultValue;slider.dispatchEvent(new Event('input',{bubbles:true}));});
 }
-for(const [rangeId,numberId] of [['hableWhiteSlider','hableWhite'],['peakSlider','peak'],['hdrPeakSlider','hdrPeakNits'],['exposureSlider','exposure'],['compressionSlider','compression'],['whiteClipSlider','whiteClip']]) {
+for(const [rangeId,numberId] of [['hableWhiteSlider','hableWhite'],['peakSlider','peak'],['hdrPeakStopsSlider','hdrPeakStops'],['exposureSlider','exposure'],['compressionSlider','compression'],['whiteClipSlider','whiteClip']]) {
  const r=$(rangeId),n=$(numberId);
  r.addEventListener('input',()=>{n.value=r.value; n.dispatchEvent(new Event('input',{bubbles:true}));});
  n.addEventListener('input',()=>{if(n.value!=='' && Number.isFinite(+n.value))r.value=clamp(+n.value,+r.min,+r.max);});
@@ -181,7 +207,8 @@ $('whitePreset').addEventListener('change',()=>setWhitePreset($('whitePreset').v
 for(const id of ['toneMapper','psyTarget','psyFit','psyConditioning','transformMode','extrapolate','chromaSpace','contrastMode'])$(id).addEventListener('change',()=>{updateReachLimits();updateAll()});
 for(const b of document.querySelectorAll('[data-gamut]'))b.addEventListener('click',()=>setGamut(b.dataset.gamut));
 for(const b of document.querySelectorAll('.resetPrimary'))b.addEventListener('click',()=>{const k=b.dataset.p;$(k+'Reach').value=1;$(k+'Hue').value=0;syncAllNumbers();updateAll()});
-$('example1').onclick=applyExample1;$('example2').onclick=applyExample2;$('resetAuthor').onclick=resetAuthor;$('resetGrade').onclick=resetGrade;
-for(const id of ['exposure','peak','compression','hdrPeakNits','hableWhite','whiteClip'])$(id).addEventListener('input',updateAll);
+$('exampleNatural').onclick=applyNaturalPrimaries;$('exampleAgxLike').onclick=applyAgxLikePrimaries;$('resetAuthor').onclick=resetAuthor;$('resetGrade').onclick=resetGrade;
+$('presetNatural').onclick=applyNaturalPreset;$('presetAgxLike').onclick=applyAgxLikePreset;$('resetAll').onclick=resetAllTuning;
+for(const id of ['exposure','peak','compression','hdrPeakStops','hableWhite','whiteClip'])$(id).addEventListener('input',updateAll);
 $('copyHlsl').onclick=async()=>{await navigator.clipboard.writeText($('matrixText').textContent);$('copyHlsl').textContent='Copied';setTimeout(()=>$('copyHlsl').textContent='Copy HLSL',900)};
 setWhitePreset('d65');

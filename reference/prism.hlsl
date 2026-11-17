@@ -23,6 +23,9 @@ static const int CHROMA_SPACE_PRISM = 0;
 static const int CHROMA_SPACE_MACLEOD_BOYNTON = 1;
 static const int CONTRAST_FUNCTION_ANCHORED = 0;
 static const int CONTRAST_FUNCTION_POW = 1;
+static const int GAMUT_MODE_OFF = 0;
+static const int GAMUT_MODE_OUTPUT_COMPRESS = 1;
+static const int GAMUT_MODE_CLIP = 2;
 
 float3x3 MatrixFromRows(float4 row0, float4 row1, float4 row2) {
   return float3x3(
@@ -70,7 +73,7 @@ struct Config {
   int highlight_saturation_space;
   int blowout_space;
 
-  // Display gamut handling: 0 off, 1 compression, 2 RGB clip.
+  // Gamut mode constants above select clip/compression stage(s).
   // Matrices convert linear BT.709 and target RGB.
   int gamut_compression_enabled;
   float3x3 bt709_to_target;
@@ -173,8 +176,9 @@ float3 ApplyYChromaScale(float3 color, float chroma_scale, Config config) {
   const float y = XYZY(color, config);
   const float3 neutral = YNeutral(y, config);
   const float3 direction = color - neutral;
-  // Preserve out-of-hull inputs; limit increases only from inside the hull.
-  if (chroma_scale > 1.f && all(color >= 0.f.xxx) && all(neutral >= 0.f.xxx)) {
+  // Outside the hull retain original chroma rather than abruptly applying
+  // the full increase at the boundary.
+  if (chroma_scale > 1.f && all(neutral >= 0.f.xxx)) {
     float boundary = 1e30f;
     [unroll] for (int i = 0; i < 3; ++i) {
       if (direction[i] < 0.f) boundary = min(boundary, neutral[i] / -direction[i]);
@@ -334,18 +338,19 @@ float3 ApplyAnchoredPowContrast(
 // White-clip C-infinity rolloff from UE Extended. At the endpoints use
 // explicit branches to avoid zero/infinity indeterminacies.
 float ApplyAnchoredCInfinityShoulder(float color, float peak, float anchor, float compression_strength, float white_clip) {
+  const float magnitude = abs(color);
   peak = max(peak, anchor + 1e-6f);
   const float clip = max(white_clip, peak + max(peak * 1e-6f, 1e-6f));
-  if (color <= anchor) return color;
-  if (color >= clip) return peak;
+  if (magnitude <= anchor) return color;
+  if (magnitude >= clip) return sign(color) * peak;
   const float shoulder_range = peak - anchor;
   const float clip_range = clip - anchor;
-  const float distance = color - anchor;
+  const float distance = magnitude - anchor;
   const float inverse_position = shoulder_range * (clip_range - distance) / ((clip - peak) * distance);
   const float weight = exp2(-inverse_position / max(compression_strength, 1.f));
   const float denominator = weight + inverse_position;
   const float transition = denominator > 0.f ? (distance / clip_range) * (weight / denominator) : 1.f;
-  return mad(peak - clip, transition, color);
+  return sign(color) * mad(peak - clip, transition, magnitude);
 }
 float3 ApplyAnchoredCInfinityShoulder(float3 color, float3 peak, float3 anchor, float compression_strength, float white_clip) {
   return float3(ApplyAnchoredCInfinityShoulder(color.x, peak.x, anchor.x, compression_strength, white_clip),
@@ -354,17 +359,9 @@ float3 ApplyAnchoredCInfinityShoulder(float3 color, float3 peak, float3 anchor, 
 }
 
 // Pre-tonal chroma grading ----------------------------------------------------
-//
 // Chroma shaping happens before contrast / flare / highlights /
 // shadows. anchor_in is therefore the adaptation/purity pivot for this stage.
 // anchor_out supplies the mapped tonal pivot and C-infinity shoulder anchor.
-//
-// The three controls can independently use either:
-//   CHROMA_SPACE_PRISM              : live Prism-primary/XYZ Y neutral-axis scaling
-//   CHROMA_SPACE_MACLEOD_BOYNTON    : adaptive Stockman-Sharpe LMS -> MB scaling
-//
-// The MB saturation path uses adaptive-relative purity.
-// The MB blowout path uses separate per-cone bleaching availability.
 
 float3 WorkingToLMS(float3 color, Config config) {
   return mul(config.working_to_lms_matrix, color);
@@ -589,11 +586,13 @@ float GamutSmoothUnitLimit(float demand) {
 }
 
 // Apply radial L8 demand against both faces of the target display gamut.
-float3 CompressDisplayGamut(float3 working, float anchor, Config config) {
-  float3 output709 = mul(config.outset_matrix, working);
+float3 CompressDisplayGamut(float3 output709, Config config) {
   float3 target = mul(config.bt709_to_target, output709);
   const float peak = max(config.tone_map_peak.x, 1e-6f);
-  anchor = clamp(anchor, 0.f, peak);
+  // Target-space positive light preserves the original luminance anchor for
+  // all colors inside the target gamut, including wide-gamut colors.
+  const float3 positive709 = mul(config.target_to_bt709, max(target, 0.f.xxx));
+  const float anchor = clamp(dot(positive709, float3(0.2126390059f, 0.7151686788f, 0.0721923154f)), 0.f, peak);
   const float3 delta = target - anchor.xxx;
   const float3 demand3 = max(max(-delta, 0.f.xxx) / max(anchor, 1e-8f),
                              max(delta, 0.f.xxx) / max(peak - anchor, 1e-8f));
@@ -607,36 +606,9 @@ float3 CompressDisplayGamut(float3 working, float anchor, Config config) {
   return mul(config.target_to_bt709, clamp(target, 0.f, peak));
 }
 
-// Match RenoDX's SanitizeGamutInput in Prism's inset basis. This only moves
-// negative-Y values to the Y=0 boundary; it is not another gamut compressor.
-float3 SanitizeInsetForGrading(float3 color, Config config) {
-  float y = XYZY(color, config);
-  if (y >= 0.f) return color;
-  const float3 positive = max(color, 0.f.xxx);
-  const float positive_y = XYZY(positive, config);
-  const float scale = positive_y / (positive_y - y);
-  return mad(color - positive, scale, positive);
-}
-
-// Applies pre-tonal chroma grading, tonal grading, and the asymptotic
-// C-infinity shoulder to a color ALREADY in the configured formation basis.
-float3 ApplyWithGamutAnchor(float3 color, Config config, out float gamut_anchor) {
-  float neutral_input = max(XYZY(max(color, 0.f.xxx), config) * config.neutral_axis_y_rcp, 0.f);
-  // Sanitize negative luminance in the actual inset basis before grading.
-  if (config.gamut_compression_enabled == 1) color = SanitizeInsetForGrading(color, config);
+// Apply chroma and anchored tonal grading in Prism space, without shoulder or outset.
+float3 ApplyGradingOnly(float3 color, Config config) {
   color = ApplyChromaGrading(color, config);
-  // Chroma grading can reintroduce negative luminance.
-  if (config.gamut_compression_enabled == 1 && XYZY(color, config) < 0.f) {
-    color = SanitizeInsetForGrading(color, config);
-  }
-
-  float3 neutral_graded = ApplyAnchoredTonalGrading(neutral_input.xxx,
-      config.anchor_in, config.anchor_out, config.contrast, config.flare,
-      config.highlight_contrast, config.shadow_contrast, config.highlights,
-      config.shadows, config.contrast_function);
-  gamut_anchor = ApplyAnchoredCInfinityShoulder(neutral_graded.x,
-      config.tone_map_peak.x, config.anchor_out.x,
-      config.tone_map_compression_strength, config.tone_map_white_clip);
 
   color = ApplyAnchoredTonalGrading(
       color,
@@ -650,9 +622,13 @@ float3 ApplyWithGamutAnchor(float3 color, Config config, out float gamut_anchor)
       config.shadows,
       config.contrast_function);
 
-  // Sanitize negative luminance after tonal grading, before the shoulder.
-  if (config.gamut_compression_enabled == 1) color = SanitizeInsetForGrading(color, config);
+  return color;
+}
 
+// Applies pre-tonal chroma grading, tonal grading, and the asymptotic
+// C-infinity shoulder to a color ALREADY in the configured formation basis.
+float3 ApplyWithShoulder(float3 color, Config config) {
+  color = ApplyGradingOnly(color, config);
   color = ApplyAnchoredCInfinityShoulder(
       color,
       config.tone_map_peak,
@@ -664,8 +640,7 @@ float3 ApplyWithGamutAnchor(float3 color, Config config, out float gamut_anchor)
 }
 
 float3 Apply(float3 color, Config config) {
-  float unused_anchor;
-  return ApplyWithGamutAnchor(color, config, unused_anchor);
+  return ApplyWithShoulder(color, config);
 }
 
 // Public BT.709 -> formation -> grade -> tone map -> output BT.709 path.
@@ -680,13 +655,15 @@ float3 Apply(float3 color, Config config) {
 //
 // Optional display-gamut compression is disabled by default.
 float3 BT709(float3 bt709, Config config) {
+  if (config.gamut_compression_enabled == GAMUT_MODE_CLIP) {
+    bt709 = mul(config.target_to_bt709, max(mul(config.bt709_to_target, bt709), 0.f.xxx));
+  }
   float3 color = mul(config.inset_matrix, bt709);
-  float gamut_anchor;
-  color = ApplyWithGamutAnchor(color, config, gamut_anchor);
+  color = ApplyWithShoulder(color, config);
   float3 output709 = mul(config.outset_matrix, color);
-  if (config.gamut_compression_enabled == 1) {
-    output709 = CompressDisplayGamut(color, gamut_anchor, config);
-  } else if (config.gamut_compression_enabled == 2) {
+  if (config.gamut_compression_enabled == GAMUT_MODE_OUTPUT_COMPRESS) {
+    output709 = CompressDisplayGamut(output709, config);
+  } else if (config.gamut_compression_enabled == GAMUT_MODE_CLIP) {
     float3 target = mul(config.bt709_to_target, output709);
     output709 = mul(config.target_to_bt709, clamp(target, 0.f, max(config.tone_map_peak.x, 1e-6f)));
   }
