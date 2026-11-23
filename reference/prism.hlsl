@@ -368,7 +368,7 @@ float3 ApplyChromaScale(
   return ApplyYChromaScale(color, chroma_scale, config);
 }
 
-// Control Resonant's anchor-relative smootherstep on Prism's XYZ Y basis.
+// Compute highlight weight with smootherstep on anchor-relative XYZ luminance (Y).
 // Start three quarters of a stop below the anchor; keep the full-strength point fixed.
 float ComputePrismYHighlightRolloff(float3 color, Config config) {
   const float onset_offset = 0.75f;
@@ -395,7 +395,7 @@ float3 ApplyChromaGrading(float3 color, float highlight_rolloff, Config config) 
   return ApplyChromaScale(color, amount, config);
 }
 
-// Equivalent Witcher softplus limiter, rearranged to avoid cancellation.
+// Smoothly limit gamut demand to one, avoiding cancellation near zero.
 float GamutSmoothUnitLimit(float demand) {
   const float sharpness = 16.f;
   const float zero_offset = 1.f - log2(1.f + exp2(sharpness)) / sharpness;
