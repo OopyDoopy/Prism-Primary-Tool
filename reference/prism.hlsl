@@ -58,15 +58,15 @@ struct Config {
   int contrast_function;
 
   // Grading controls.
-  float highlights;
-  float shadows;
+  float highlight_intensity;
+  float shadow_brightness;
   float contrast;
   float saturation;
   float highlight_saturation;
-  float dechroma;
-  float flare;
-  float highlight_contrast;
-  float shadow_contrast;
+  float blowout;
+  float deep_shadow;
+  float highlight_definition;
+  float shadow_softness;
 
   int gamut_compression_mode;
   float tone_map_white_clip;
@@ -85,15 +85,15 @@ Config CreateResolved(
     float3x3 inset_to_xyz = PRISM_DEFAULT_INSET_TO_XYZ,
     float cinfinite_rolloff_compression_strength = 1.5f,
     int contrast_function = CONTRAST_FUNCTION_POW,
-    float highlights = 1.f,
-    float shadows = 1.f,
+    float highlight_intensity = 1.f,
+    float shadow_brightness = 1.f,
     float contrast = 1.f,
     float saturation = 1.f,
     float highlight_saturation = 1.f,
-    float dechroma = 0.f,
-    float flare = 0.f,
-    float highlight_contrast = 1.f,
-    float shadow_contrast = 1.f,
+    float blowout = 0.f,
+    float deep_shadow = 0.f,
+    float highlight_definition = 1.f,
+    float shadow_softness = 1.f,
     float tone_map_white_clip = 100.f,
     int shoulder_mode = SHOULDER_CINFINITY_REINHARD,
     // Compress to BT.709 for SDR or Display P3 for HDR (default).
@@ -107,15 +107,15 @@ Config CreateResolved(
       inset_to_xyz[1],
       cinfinite_rolloff_compression_strength,
       contrast_function,
-      highlights,
-      shadows,
+      highlight_intensity,
+      shadow_brightness,
       contrast,
       saturation,
       highlight_saturation,
-      dechroma,
-      flare,
-      highlight_contrast,
-      shadow_contrast,
+      blowout,
+      deep_shadow,
+      highlight_definition,
+      shadow_softness,
       gamut_compression_mode,
       tone_map_white_clip,
       shoulder_mode
@@ -389,7 +389,7 @@ float ComputeHighlightSaturationScale(float highlight_rolloff, Config config) {
 }
 
 float3 ApplyChromaGrading(float3 color, float highlight_rolloff, Config config) {
-  const float strength = saturate(config.dechroma * highlight_rolloff);
+  const float strength = saturate(config.blowout * highlight_rolloff);
   const float availability = lerp(1.f, 1.f / (1.f + config.tone_map_peak / max(config.anchor_out.x, 1e-9f)), strength);
   const float amount = config.saturation * ComputeHighlightSaturationScale(highlight_rolloff, config) * availability;
   return ApplyChromaScale(color, amount, config);
@@ -472,11 +472,11 @@ float3 ApplyGradingOnly(float3 color, Config config) {
       config.anchor_in,
       config.anchor_out,
       config.contrast,
-      config.flare,
-      config.highlight_contrast,
-      config.shadow_contrast,
-      config.highlights,
-      config.shadows,
+      config.deep_shadow,
+      config.highlight_definition,
+      config.shadow_softness,
+      config.highlight_intensity,
+      config.shadow_brightness,
       config.contrast_function);
 
   return color;

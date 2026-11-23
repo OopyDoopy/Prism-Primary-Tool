@@ -7,6 +7,7 @@ desktop.ini
 
 # Local scratch files, archives, and legacy application files
 github-pages/
+/tests/
 __pycache__/
 *.py[cod]
 *.log
