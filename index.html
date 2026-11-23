@@ -18,10 +18,11 @@ header{
 }
 h1{font-size:18px;margin:0} h2{font-size:14px;margin:0 0 12px} h3{font-size:12px;margin:0}
 small,.muted{color:var(--muted)}
-button,input[type=number],select{
+button,.downloadButton,input[type=number],select{
   background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 8px
 }
-button{cursor:pointer}button:hover{border-color:#6b7581}
+button,.downloadButton{cursor:pointer}button:hover,.downloadButton:hover{border-color:#6b7581}
+.downloadButton{font:400 13.3333px Arial,sans-serif;text-decoration:none}
 button.active{border-color:#aeb8c3;background:#272c33}
 main{width:100%;padding:16px;display:grid;grid-template-columns:440px minmax(0,1fr);gap:16px}
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;min-width:0}
@@ -115,13 +116,14 @@ pre{
     <div class="selectorRow"><label>Tone mapper<select id="toneMapper"><option value="0">Prism</option><option value="1">Hable (Uncharted 2)</option><option value="2">Reinhard (luminance)</option><option value="3">ACES 1.3 (SDR reference)</option><option value="4">Blender AgX (SDR reference)</option><option value="5">PsychoV35</option></select></label></div>
     
     <div class="curveControls">
+      <div class="curveControl prismOnly"><label for="shoulderMode">Prism shoulder</label><select id="shoulderMode"><option value="0">C∞ rolloff</option><option value="1" selected>C∞ Reinhard-based</option></select></div>
       <div class="curveControl"><label>Exposure (stops)</label><input id="exposureSlider" type="range" min="-10" max="10" step="0.05" value="0"><input id="exposure" type="number" value="0" step="0.05"></div>
       <div class="curveControl" id="sdrPeakControl" hidden><label>SDR peak (relative to diffuse white)</label><input id="peakSlider" type="range" min="0.1" max="10" step="0.05" value="1"><input id="peak" type="number" value="1" min="0.001" step="0.1"></div>
       <div class="curveControl" id="hdrPeakControl" hidden><label for="hdrPeakStopsSlider" title="Peak target in stops above nominal SDR white">HDR peak (stops above SDR white)</label><input id="hdrPeakStopsSlider" type="range" min="0" max="10" step="0.05" value="2.3"><input id="hdrPeakStops" type="number" value="2.3" min="0" max="10" step="0.05" aria-label="HDR peak stops above SDR white"></div>
       <div class="curveControl" id="prismCompressionControl"><label>Compression strength ≥ 1</label><input id="compressionSlider" type="range" min="1" max="5" step="0.05" value="1.5"><input id="compression" type="number" value="1.5" min="1" step="0.05"></div>
-      <div class="curveControl prismOnly"><label>White clip (scene linear)</label><input id="whiteClipSlider" type="range" min="1" max="100" step="1" value="100"><input id="whiteClip" type="number" min="0.001" max="1000000" step="1" value="100"></div>
+      <div class="curveControl prismOnly"><label title="Input to the shoulder after tonal grading">White clip (graded linear)</label><input id="whiteClipSlider" type="range" min="1" max="100" step="1" value="100"><input id="whiteClip" type="number" min="0.001" max="1000000" step="1" value="100"></div>
     </div>
-    <div class="controlGroup"><h3>Prism presets</h3><div class="headerButtons" style="justify-content:flex-start;margin-top:7px"><button id="presetNatural" type="button">Natural</button><button id="presetAgxLike" type="button">AgX-Like</button><button id="resetAll" type="button">Reset all</button></div></div>
+    <div class="controlGroup"><h3>Prism presets</h3><div class="headerButtons" style="justify-content:flex-start;margin-top:7px"><button id="presetAgxLike" type="button">Prism Default</button><button id="resetAll" type="button" title="Set controls to neutral positions relative to the selected reference gamut.">Set Neutral</button></div></div>
   </div>
   <div class="panel" id="hableControls" hidden><h2>Hable controls</h2><div class="controlRow"><label for="hableWhiteSlider" title="White point after the standard 2× exposure bias">Curve white point</label><input id="hableWhiteSlider" type="range" min="1" max="32" step="0.1" value="11.2"><input id="hableWhite" type="number" min="0.01" max="1000" step="0.1" value="11.2"></div></div>
   <div class="panel" id="psychoControls" hidden><h2>PsychoV35 controls</h2><div class="selectorRow"><label>Target gamut<select id="psyTarget"><option value="0">BT.709</option><option value="1">BT.2020</option></select></label><label>Gamut fit<select id="psyFit"><option value="0">None</option><option value="1">RGB clip</option><option value="2" selected>A exact</option><option value="3">A smooth</option><option value="4">Contrast trade</option></select></label><label>Human gamut conditioning<select id="psyConditioning"><option value="0">Off</option><option value="1" selected>On</option></select></label></div><div class="controlRow"><label for="psyHighlights">Highlights</label><input id="psyHighlights" type="range" min="0" max="2" step="0.01" value="1"><input id="psyHighlightsN" type="number" min="0" max="2" step="0.01" value="1"></div>
@@ -135,19 +137,19 @@ pre{
 <div class="controlRow"><label for="psyAnchorOut">Output anchor</label><input id="psyAnchorOut" type="range" min="0.01" max="1" step="0.01" value="0.18"><input id="psyAnchorOutN" type="number" min="0.01" max="1" step="0.01" value="0.18"></div>
 <div class="controlRow"><label for="psyFitPower">Fit power (0 = exact)</label><input id="psyFitPower" type="range" min="0" max="8" step="0.1" value="0"><input id="psyFitPowerN" type="number" min="0" max="8" step="0.1" value="0"></div></div>
   <div class="panel prismOnly">
-    <div class="sectionHead"><h2>CIE 1931 xy primary authoring</h2><b id="presetBadge">BT.709</b></div>
+    <div class="sectionHead"><h2>CIE 1931 xy primary authoring</h2><b id="presetBadge">BT.2020</b></div>
   <h3 style="margin-bottom:7px">Primary presets</h3>
   <div class="headerButtons" style="justify-content:flex-start;margin-bottom:12px">
-    <button id="exampleNatural" type="button">Natural</button>
-    <button id="exampleAgxLike" type="button" title="AgX-like BT.2020 inset and inverse outset">AgX-Like</button>
-    <button id="resetAuthor">Reset primaries</button>
+    <button id="exampleAgxLike" type="button" title="Prism Default BT.2020 inset and inverse outset">Prism Default</button>
+    <button id="resetAuthor" type="button" title="Set primary sliders to neutral positions relative to the selected reference gamut.">Set Neutral</button>
   </div>
     <div class="controlGroup">
-      <div class="selectorRow"><label>Reference gamut<select id="authorGamut"><option value="bt709">BT.709</option><option value="p3">DCI-P3 primaries</option><option value="bt2020">BT.2020</option><option value="ap1">ACES AP1</option><option value="lms">Normalized LMS (BT.709 white)</option></select></label>
-      <label>Matrix construction<select id="transformMode"><option value="working">Working basis (inverse pair)</option><option value="agx" selected>AgX-style (independent outset)</option></select></label></div>
+      <div class="selectorRow"><label>Reference gamut<select id="authorGamut"><option value="bt709">BT.709</option><option value="p3">DCI-P3 primaries</option><option value="bt2020" selected>BT.2020</option><option value="ap1">ACES AP1</option><option value="lms">Normalized LMS (BT.709 white)</option></select></label>
+      </div>
       <label class="checkRow"><input id="extrapolate" type="checkbox"> Allow primary extrapolation (past the gamut boundary)</label>
       
       <div class="controlRow"><label for="strength">Master strength</label><input id="strength" type="range" min="0" max="2" step=".005" value="1"><input id="strengthN" type="number" min="0" max="2" step=".005" value="1"></div>
+      <div class="controlRow" id="basisScaleRow" title="Scale the inset primaries around white; the outset is their inverse."><label for="basisScale">Inset basis scale</label><input id="basisScale" type="range" min=".05" max="2" step=".005" value="1"><input id="basisScaleN" type="number" min=".05" max="2" step=".005" value="1"></div>
       <div class="controlRow"><label for="globalReach">Global reach</label><input id="globalReach" type="range" min=".05" max="1" step=".0025" value="1"><input id="globalReachN" type="number" min=".05" max="1" step=".0025" value="1"></div>
       <div class="controlRow"><label for="globalHue">Global hue °</label><input id="globalHue" type="range" min="-90" max="90" step=".05" value="0"><input id="globalHueN" type="number" min="-180" max="180" step=".05" value="0"></div>
     </div>
@@ -158,24 +160,14 @@ pre{
     </div>
     <div class="controlGroup">
       <div class="primaryHead"><div class="primaryName"><span class="swatch r"></span>Red primary</div><button class="resetPrimary" data-p="r">Reset</button></div>
-      <div class="controlRow"><label for="rReach">Reach</label><input id="rReach" type="range" min=".05" max="1" step=".0025" value="1"><input id="rReachN" type="number" min=".05" max="1" step=".0025" value="1"></div>
-      <div class="controlRow"><label for="rHue">Hue offset °</label><input id="rHue" type="range" min="-45" max="45" step=".05" value="0"><input id="rHueN" type="number" min="-180" max="180" step=".05" value="0"></div>
+      <div class="controlRow"><label for="rReach">Reach</label><input id="rReach" type="range" min=".05" max="1" step=".0025" value=".67"><input id="rReachN" type="number" min=".05" max="1" step=".0025" value=".67"></div>
+      <div class="controlRow"><label for="rHue">Hue offset °</label><input id="rHue" type="range" min="-45" max="45" step=".05" value="2.15"><input id="rHueN" type="number" min="-180" max="180" step=".05" value="2.15"></div>
       <div class="primaryHead"><div class="primaryName"><span class="swatch g"></span>Green primary</div><button class="resetPrimary" data-p="g">Reset</button></div>
-      <div class="controlRow"><label for="gReach">Reach</label><input id="gReach" type="range" min=".05" max="1" step=".0025" value="1"><input id="gReachN" type="number" min=".05" max="1" step=".0025" value="1"></div>
-      <div class="controlRow"><label for="gHue">Hue offset °</label><input id="gHue" type="range" min="-45" max="45" step=".05" value="0"><input id="gHueN" type="number" min="-180" max="180" step=".05" value="0"></div>
+      <div class="controlRow"><label for="gReach">Reach</label><input id="gReach" type="range" min=".05" max="1" step=".0025" value=".72"><input id="gReachN" type="number" min=".05" max="1" step=".0025" value=".72"></div>
+      <div class="controlRow"><label for="gHue">Hue offset °</label><input id="gHue" type="range" min="-45" max="45" step=".05" value="-1.25"><input id="gHueN" type="number" min="-180" max="180" step=".05" value="-1.25"></div>
       <div class="primaryHead"><div class="primaryName"><span class="swatch b"></span>Blue primary</div><button class="resetPrimary" data-p="b">Reset</button></div>
-      <div class="controlRow"><label for="bReach">Reach</label><input id="bReach" type="range" min=".05" max="1" step=".0025" value="1"><input id="bReachN" type="number" min=".05" max="1" step=".0025" value="1"></div>
-      <div class="controlRow"><label for="bHue">Hue offset °</label><input id="bHue" type="range" min="-45" max="45" step=".05" value="0"><input id="bHueN" type="number" min="-180" max="180" step=".05" value="0"></div>
-    </div>
-    <div class="controlGroup" id="outsetGroup" hidden>
-      <h3>AgX-style independent outset primaries</h3>
-      <p class="muted">Hue offsets are relative to the inset hue; inset and outset share the authored white.</p>
-      <div class="controlRow"><label for="outsetR">Red purity</label><input id="outsetR" type="range" min="-1" max=".5" step=".005" value="0"><input id="outsetRN" type="number" min="-1" max=".5" step=".005" value="0"></div>
-      <div class="controlRow"><label for="outsetRHue">Red hue °</label><input id="outsetRHue" type="range" min="-45" max="45" step=".05" value="0"><input id="outsetRHueN" type="number" min="-45" max="45" step=".05" value="0"></div>
-      <div class="controlRow"><label for="outsetG">Green purity</label><input id="outsetG" type="range" min="-1" max=".5" step=".005" value="0"><input id="outsetGN" type="number" min="-1" max=".5" step=".005" value="0"></div>
-      <div class="controlRow"><label for="outsetGHue">Green hue °</label><input id="outsetGHue" type="range" min="-45" max="45" step=".05" value="0"><input id="outsetGHueN" type="number" min="-45" max="45" step=".05" value="0"></div>
-      <div class="controlRow"><label for="outsetB">Blue purity</label><input id="outsetB" type="range" min="-1" max=".5" step=".005" value="0"><input id="outsetBN" type="number" min="-1" max=".5" step=".005" value="0"></div>
-      <div class="controlRow"><label for="outsetBHue">Blue hue °</label><input id="outsetBHue" type="range" min="-45" max="45" step=".05" value="0"><input id="outsetBHueN" type="number" min="-45" max="45" step=".05" value="0"></div>
+      <div class="controlRow"><label for="bReach">Reach</label><input id="bReach" type="range" min=".05" max="1" step=".0025" value=".8875"><input id="bReachN" type="number" min=".05" max="1" step=".0025" value=".8875"></div>
+      <div class="controlRow"><label for="bHue">Hue offset °</label><input id="bHue" type="range" min="-45" max="45" step=".05" value="-5.7"><input id="bHueN" type="number" min="-180" max="180" step=".05" value="-5.7"></div>
     </div>
     <div id="solverStatus" role="status" aria-live="polite"></div>
   </div>
@@ -183,11 +175,12 @@ pre{
 
 
   <div class="panel prismOnly">
-    <div class="sectionHead"><h2>Prism grading controls</h2><button id="resetGrade">Reset grading</button></div>
+    <div class="sectionHead"><h2>Prism grading controls</h2></div>
+    <div class="controlGroup"><h3>Curve presets</h3><div class="headerButtons" style="justify-content:flex-start;margin-top:7px"><button id="curveRecommended" type="button" title="Apply the recommended Prism grade without changing primaries, gamut handling, or the shoulder.">Prism Recommended</button><button id="resetGrade" type="button" title="Set grading sliders to neutral positions without changing the reference gamut or primaries.">Set Neutral</button></div></div>
 
-    <div class="selectorRow"><label>Gamut handling<select id="prismGamut"><option value="off" selected>Off</option><option value="bt709">Compress output BT.709</option><option value="p3">Compress output Display P3</option><option value="bt2020">Compress output BT.2020</option><option value="clip-bt709">Clip BT.709</option><option value="clip-p3">Clip Display P3</option><option value="clip-bt2020">Clip BT.2020</option></select></label></div>
-    <div class="selectorRow"><label>Chroma basis<select id="chromaSpace"><option value="yf" selected>Prism / XYZ Y</option><option value="mb">MacLeod–Boynton / LMS</option></select></label></div>
-    <div class="selectorRow" style="margin-top:8px"><label>Contrast function<select id="contrastMode"><option value="anchored">Anchored C∞ tonal grading</option><option value="pow">POW contrast (sign-preserving)</option></select></label></div>
+    <!-- Compress output BT.709 is recommended for SDR; Compress output Display P3 for HDR. -->
+    <div class="selectorRow"><label>Gamut handling<select id="prismGamut"><option value="off">Off</option><option value="output-bt709">Output clip BT.709</option><option value="output-p3">Output clip Display P3</option><option value="output-bt2020">Output clip BT.2020</option><option value="post-bt709" selected>Compress output BT.709</option><option value="post-p3">Compress output Display P3</option><option value="post-bt2020">Compress output BT.2020</option></select></label></div>
+    <div class="selectorRow" style="margin-top:8px"><label>Contrast function<select id="contrastMode"><option value="anchored">Anchored C∞ tonal grading</option><option value="pow" selected>POW contrast (sign-preserving)</option></select></label></div>
     <div class="controlGroup">
       <div class="controlRow"><label for="saturation">Saturation</label><input id="saturation" type="range" min="0" max="2" step="0.0025" value="1"><input id="saturationN" type="number" min="0" max="8" step="0.0025" value="1"></div>
       <div class="controlRow"><label for="highlightSat">Highlight sat.</label><input id="highlightSat" type="range" min="0" max="2" step="0.0025" value="1"><input id="highlightSatN" type="number" min="0" max="8" step="0.0025" value="1"></div>
@@ -198,12 +191,12 @@ pre{
     <div class="controlGroup">
       <div class="controlRow"><label for="highlights">Highlight intensity</label><input id="highlights" type="range" min="0" max="2" step="any" value="1"><input id="highlightsN" type="number" min="0" max="8" step="0.0025" value="1"></div>
       <div class="controlRow"><label for="highlightContrast">Highlight definition</label><input id="highlightContrast" type="range" min="0" max="2.5" step="0.0025" value="1"><input id="highlightContrastN" type="number" min="0" max="8" step="0.0025" value="1"></div>
-      <div class="controlRow"><label for="contrast">Contrast</label><input id="contrast" type="range" min="0" max="2.5" step="0.0025" value="1"><input id="contrastN" type="number" min="0" max="8" step="0.0025" value="1"></div>
-      <div class="controlRow"><label for="shadowContrast">Shadow softness</label><input id="shadowContrast" type="range" min="0" max="2.5" step="0.0025" value="1"><input id="shadowContrastN" type="number" min="0" max="8" step="0.0025" value="1"></div>
-      <div class="controlRow"><label for="shadows">Shadow brightness</label><input id="shadows" type="range" min="0" max="2" step="0.0025" value="1"><input id="shadowsN" type="number" min="0" max="8" step="0.0025" value="1"></div>
-      <div class="controlRow"><label for="deepShadowV2">Deep shadow</label><input id="deepShadowV2" type="range" min="0" max="1" step="0.0025" value="0"><input id="deepShadowV2N" type="number" min="0" max="1" step="0.0025" value="0"></div>
+      <div class="controlRow"><label for="contrast">Contrast</label><input id="contrast" type="range" min="0" max="2.5" step="0.0025" value="1.145"><input id="contrastN" type="number" min="0" max="8" step="0.0025" value="1.145"></div>
+      <div class="controlRow"><label for="shadowContrast">Shadow softness</label><input id="shadowContrast" type="range" min="0" max="2.5" step="0.0025" value="0.7925"><input id="shadowContrastN" type="number" min="0" max="8" step="0.0025" value="0.7925"></div>
+      <div class="controlRow"><label for="shadows">Shadow brightness</label><input id="shadows" type="range" min="0" max="2" step="0.0025" value="0.6625"><input id="shadowsN" type="number" min="0" max="8" step="0.0025" value="0.6625"></div>
+      <div class="controlRow"><label for="deepShadowV2">Deep shadow</label><input id="deepShadowV2" type="range" min="0" max="1" step="0.0025" value="0.24"><input id="deepShadowV2N" type="number" min="0" max="1" step="0.0025" value="0.24"></div>
       <div class="controlRow"><label for="anchorIn">Anchor in</label><input id="anchorIn" type="range" min="0.01" max="1" step="0.001" value="0.18"><input id="anchorInN" type="number" min="0.001" max="4" step="0.001" value="0.18"></div>
-      <div class="controlRow"><label for="anchorOut">Anchor out</label><input id="anchorOut" type="range" min="0.01" max="1" step="0.001" value="0.18"><input id="anchorOutN" type="number" min="0.001" max="4" step="0.001" value="0.18"></div>
+      <div class="controlRow"><label for="anchorOut">Anchor out</label><input id="anchorOut" type="range" min="0.01" max="1" step="0.001" value="0.135"><input id="anchorOutN" type="number" min="0.001" max="4" step="0.001" value="0.135"></div>
     </div>
   </div>
 
@@ -219,9 +212,8 @@ pre{
       </label>
       <button id="previousEXR" type="button" aria-label="Previous image" title="Previous image" disabled>◀</button>
       <button id="nextEXR" type="button" aria-label="Next image" title="Next image" disabled>▶</button>
-      <button id="chooseFiles" type="button">Open EXR files</button><input id="localFiles" type="file" accept=".exr" multiple hidden>
-      <button id="chooseFolder" type="button">Open folder</button><input id="localFolder" type="file" webkitdirectory multiple hidden>
-      <button id="refreshEXR" type="button" title="Reload the image list">Refresh files</button>
+      <button id="chooseFiles" type="button">Open EXR file</button><input id="localFiles" type="file" accept=".exr" multiple hidden>
+      <button id="chooseFolder" type="button">Open EXR folder</button><input id="localFolder" type="file" webkitdirectory multiple hidden>
       <label>EXR source color space
         <select id="sourceGamut">
           <option value="auto" selected>Auto (ACES2065-1 fallback)</option>
@@ -252,8 +244,17 @@ pre{
       </div>
       <aside class="previewMeasures prismOnly" aria-label="Primary measurements">
   <div class="panel"><h2>Primary geometry diagnostics</h2><div id="diagnostics" class="statusGrid"></div>
-    <table class="xyTable" style="margin-top:12px"><thead><tr><th>Primary</th><th>Inset x</th><th>Inset y</th><th>Outset x</th><th>Outset y</th></tr></thead><tbody id="primaryTable"></tbody></table>
+    <table class="xyTable" style="margin-top:12px"><thead><tr><th>Primary</th><th>Inset x</th><th>Inset y</th></tr></thead><tbody id="primaryTable"></tbody></table>
     <table class="xyTable" style="margin-top:12px"><thead><tr><th>Axis</th><th>x</th><th>y</th><th>Y</th></tr></thead><tbody id="axisTable"></tbody></table>
+  </div>
+  <div class="panel"><h2>CIE 1931 xy chromaticity</h2>
+    <canvas id="cieXYPlot" width="800" height="800" aria-label="CIE xy diagram comparing authored and reference primary triangles and white points"></canvas>
+    <div class="plotLegend"><span class="legendLine"><i></i>Authored gamut</span><span class="legendLine"><i class="dash"></i>Reference gamut</span></div>
+  </div>
+  <div class="panel"><h2>3D RGB gamut lattice</h2>
+    <canvas id="gamutLattice" width="800" height="680" tabindex="0" style="touch-action:none;cursor:grab" aria-label="Interactive authored RGB lattice inside the reference RGB cube"></canvas>
+    <div class="plotLegend"><span class="legendLine"><i></i>Authored gamut</span><span class="legendLine"><i class="dash"></i>Reference RGB cube</span></div>
+    <small>Drag or use arrow keys to rotate · scroll to zoom · double-click or press Home to reset.</small>
   </div>
   <div class="panel"><h2>CIE xyY gamut and six-axis flights</h2>
     <canvas id="ciePlot" width="1000" height="720" aria-label="Interactive CIE xyY gamut volume with RGB and secondary axis flights"></canvas>
@@ -272,7 +273,7 @@ pre{
   </div>
 
   <div class="panel compactChart">
-    <h2>Tonal grading + C∞ shoulder</h2>
+    <h2>Tonal grading + shoulder</h2>
     <canvas id="curve" width="1100" height="500" aria-label="Per-channel tonal grading and shoulder curve"></canvas>
     <div class="plotLegend"><span class="legendLine"><i></i>Exposure + grading + shoulder</span><span class="legendLine"><i class="gold"></i>Exposure + shoulder</span><span class="legendLine"><i class="dash"></i>Identity</span></div>
   </div>
@@ -292,15 +293,19 @@ pre{
   <div class="panel matrixPanel">
     <div class="sectionHead">
       <h2>Prism matrices / HLSL</h2>
-      <button id="copyHlsl">Copy HLSL</button>
+      <div class="headerButtons">
+        <button id="copyHlsl">Copy HLSL</button>
+        <a class="downloadButton" href="reference/prism.hlsl" download>Download RenoDX HLSL</a>
+        <a class="downloadButton" href="reference/prism_standalone.hlsl" download>Download standalone HLSL</a>
+      </div>
     </div>
     <pre id="matrixText"></pre>
   </div>
 </section>
 </main>
 
-<script src="authoring.js?v=global-presets-2"></script>
-<script src="settings.js?v=global-presets-1"></script>
+<script src="authoring.js?v=gamut-views-1"></script>
+<script src="settings.js?v=recommended-curve-2"></script>
 <script src="tonemap.generated.js"></script>
 <script src="preview.js?v=output-y-compression-1"></script>
 </body>

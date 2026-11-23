@@ -22,8 +22,8 @@
     window.prismSavedImage=savedImage;
     // Restore selectors and checkboxes first so dynamic range limits are correct.
     for(const el of controls.filter(el=>el.tagName==='SELECT'||el.type==='checkbox')){
-      // Migrate the previous saturation basis to the shared selector.
-      const v=el.id==='chromaSpace' ? (state.controls.chromaSpace ?? state.controls.satSpace) : state.controls[el.id];
+      let v=state.controls[el.id];
+      if(el.id==='prismGamut' && ['bt709','p3','bt2020'].includes(v))v='post-'+v;
       if(el.type==='checkbox'){if(typeof v==='boolean')el.checked=v;}
       else if(typeof v==='string' && [...el.options].some(o=>o.value===v))el.value=v;
     }
@@ -65,6 +65,6 @@
   document.addEventListener('input',event=>{if(event.target.matches('input[id],select[id]'))schedule();});
   document.addEventListener('change',event=>{if(event.target.matches('input[id],select[id]'))schedule();});
   // Presets and group resets update controls programmatically.
-  document.addEventListener('click',event=>{if(event.target.closest('button[data-gamut],button.resetPrimary,#exampleNatural,#exampleAgxLike,#resetAuthor,#resetGrade,#presetNatural,#presetAgxLike,#resetAll,button.resetSlider'))schedule();});
+  document.addEventListener('click',event=>{if(event.target.closest('button[data-gamut],button.resetPrimary,#exampleAgxLike,#resetAuthor,#resetGrade,#curveRecommended,#presetAgxLike,#resetAll,button.resetSlider'))schedule();});
   window.addEventListener('pagehide',()=>{if(timer){clearTimeout(timer);save();}});
 })();

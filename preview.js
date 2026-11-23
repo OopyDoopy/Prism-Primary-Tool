@@ -1,4 +1,4 @@
-/* Prism WebGL2 preview — CIE-resolved CPU matrices, Prism/XYZ Y or Stockman-Sharpe MacLeod-Boynton controls. */
+/* Prism WebGL2 preview — CIE-resolved matrices and XYZ Y chroma controls. */
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
@@ -26,7 +26,7 @@
   in vec2 vUV;
   out vec4 outColor;
   uniform sampler2D uImage;
-  uniform mat3 uSrc709, uInset, uOutset, uWorkingToLMS, uLMSToWorking;
+  uniform mat3 uSrc709, uInset, uOutset;
   uniform vec3 uYWeights, uNeutral;
   uniform float uNeutralInvY;
   uniform vec4 uGrade0; // saturation, highlight saturation, blowout, unused
@@ -36,6 +36,7 @@
   uniform highp sampler3D uReferenceLut;
   uniform mat3 uToEGamut;
   uniform float uHableWhite, uWhiteClip;
+  uniform int uShoulderMode;
   uniform vec4 uPsychoA,uPsychoB;
   uniform vec2 uPsychoC;
   uniform ivec3 uPsychoMode;
@@ -44,71 +45,11 @@
   uniform int uContrastMode, uGamutWarning, uPrismGamut;
   uniform mat3 uPrismTarget, uTargetTo709;
   uniform mat3 uGamutMatrix;
-  uniform int uChromaSpace; // shared chroma basis
   uniform float uSplit;
 
   const float E = 1e-9;
   float xyzY(vec3 c) { return dot(c, uYWeights); }
   vec3 yNeutral(float y) { return uNeutral * (y * uNeutralInvY); }
-  vec3 chromaScale(vec3 c, float amount) {
-    vec3 neutral = yNeutral(xyzY(c));
-    vec3 direction = c - neutral;
-    // Outside the hull, retain the original chroma rather than abruptly
-    // switching from a limited increase to an unlimited one.
-    if (amount > 1.0 && all(greaterThanEqual(neutral,vec3(0.0)))) {
-      float boundary=1e30;
-      for(int i=0;i<3;i++) if(direction[i]<0.0) boundary=min(boundary,neutral[i]/(-direction[i]));
-      if(boundary<1e29) {
-        float headroom=max(boundary-1.0,0.0), increase=amount-1.0;
-        amount=1.0+(headroom>0.0 ? headroom*increase/length(vec2(increase,headroom)) : 0.0);
-      }
-    }
-    return neutral + direction * amount;
-  }
-  const vec3 MB_WEIGHTS=vec3(0.68990272,0.34832189,0.0371597069161);
-  float limitMBIncrease(vec2 mb,vec2 neutral,float amount,vec3 adapt) {
-    vec2 direction=mb-neutral;
-    if(amount<=1.0 || dot(direction,direction)<=1e-14) return amount;
-    // The MB ray is linear in working RGB at fixed L+M. Its first zero
-    // channel is the same hull intersection, including primaries at infinity.
-    vec3 origin=uLMSToWorking*(vec3(neutral.x,1.0-neutral.x,neutral.y)*adapt/MB_WEIGHTS);
-    vec3 delta=uLMSToWorking*(vec3(direction.x,-direction.x,direction.y)*adapt/MB_WEIGHTS);
-    if(any(lessThan(origin,vec3(-1e-6)))) return amount;
-    float boundary=1e30;
-    for(int i=0;i<3;i++) if(delta[i]<0.0) boundary=min(boundary,max(origin[i],0.0)/(-delta[i]));
-    if(boundary>=1e29) return amount;
-    float headroom=max(boundary-1.0,0.0), increase=amount-1.0;
-    return 1.0+(headroom>0.0 ? headroom*increase/length(vec2(increase,headroom)) : 0.0);
-  }
-  vec3 mbPurity(vec3 c, float amount) {
-    if(abs(amount-1.0)<0.00001) return c;
-    vec3 lms=uWorkingToLMS*c;
-    vec3 adapt=max(uWorkingToLMS*vec3(uGrade1.x),vec3(0.000001));
-    vec3 weightedRelative=(lms*MB_WEIGHTS)/adapt;
-    float y=max(weightedRelative.r+weightedRelative.g,0.0);
-    vec2 mb=y>0.0?vec2(weightedRelative.r/y,weightedRelative.b/y):vec2(0.0);
-    float neutralY=MB_WEIGHTS.r+MB_WEIGHTS.g;
-    vec2 mbNeutral=vec2(MB_WEIGHTS.r/neutralY,MB_WEIGHTS.b/neutralY);
-    if(y>1e-20) amount=limitMBIncrease(mb,mbNeutral,amount,adapt);
-    mb=mix(mbNeutral,mb,amount);
-    vec3 weightedOut=vec3(mb.x,1.0-mb.x,mb.y)*y;
-    vec3 lmsOut=weightedOut*adapt/MB_WEIGHTS;
-    return uLMSToWorking*lmsOut;
-  }
-  vec3 chromaScaleSelected(vec3 c,float scale,int space) {
-    if(abs(scale-1.0)<0.00001) return c;
-    return space==1?mbPurity(c,scale):chromaScale(c,scale);
-  }
-  vec3 blowoutMB(vec3 c,float highlightRolloff) {
-    vec3 lms=uWorkingToLMS*c;
-    vec3 adapt=max(uWorkingToLMS*vec3(uGrade1.x),vec3(0.000001));
-    vec3 peakLMS=max(uWorkingToLMS*vec3(uGrade1.x*uCurve.x/max(uGrade1.y,0.000001)),vec3(0.0));
-    float blowoutStrength=clamp(uGrade0.z*highlightRolloff,0.0,1.0);
-    vec3 avail=mix(vec3(1.0),1.0/(1.0+peakLMS/adapt),blowoutStrength);
-    float energy=lms.r+lms.g+lms.b;
-    vec3 whiteEnergy=adapt*(energy/(adapt.r+adapt.g+adapt.b));
-    return uLMSToWorking*max(whiteEnergy+(lms-whiteEnergy)*avail,vec3(0.0));
-  }
   float infTransition(float x) {
     x = clamp(x, 0.0, 1.0);
     if (x <= 0.0) return 0.0;
@@ -185,6 +126,15 @@
     if(magnitude<=anchor) return x;
     if(magnitude>=clip) return sign(x)*peak;
     float range=peak-anchor, clipRange=clip-anchor, distance=magnitude-anchor;
+    if(uShoulderMode==1) {
+      float t=distance/clipRange;
+      float q=log(2.0)*(2.0*t-1.0)/(t*(1.0-t));
+      float logWarp=log(distance/range)+max(q,0.0)+log(1.0+exp(-abs(q)));
+      float logBase=max(logWarp,0.0)+log(1.0+exp(-abs(logWarp)));
+      float reinhard=range*(1.0-exp(-logBase));
+      float start=infTransition(distance/min(range/16.0,clipRange*0.25));
+      return sign(x)*(anchor+mix(distance,reinhard,start));
+    }
     float inversePosition=range*(clipRange-distance)/((clip-peak)*distance);
     float weight=exp2(-inversePosition/max(uCurve.y,1.0));
     float denom=weight+inversePosition;
@@ -194,7 +144,7 @@
   vec3 zeroNaN(vec3 value) {
     return mix(value,vec3(0.0),isnan(value));
   }
-  // Adapted from CompressLMSRadial: L8 demand and the same unit limiter.
+  // Smooth unit limiter adapted from CompressLMSRadial.
   float gamutSmoothUnitLimit(float demand) {
     const float sharpness=16.0;
     const float zeroOffset=1.0-log2(1.0+exp2(sharpness))/sharpness;
@@ -213,65 +163,108 @@
     float transition=1.0/(1.0+exp2((1.0-2.0*t)/(t*(1.0-t))));
     return mix(nearZero,mapped,transition);
   }
-  vec3 compressPrismGamut(vec3 output709) {
-    vec3 target=uPrismTarget*output709;
-    float peak=max(uCurve.x,0.000001);
-    // Use target-space positive light for the anchor. Unlike clipping BT.709,
-    // this leaves the anchor unchanged for every color inside the target gamut.
-    vec3 positive709=uTargetTo709*max(target,vec3(0.0));
-    float anchor=clamp(dot(positive709,vec3(0.2126390059,0.7151686788,0.0721923154)),0.0,peak);
-    vec3 delta=target-vec3(anchor);
-    // Radial L8 demand against both faces of the target display gamut.
-    vec3 demand3=max(max(-delta,vec3(0.0))/max(anchor,1e-8),
-                     max(delta,vec3(0.0))/max(peak-anchor,1e-8));
-    float scale=max(demand3.x,max(demand3.y,demand3.z));
-    if(scale>0.0) {
-      vec3 n=demand3/scale;
-      n*=n; n*=n;
-      float demand=scale*sqrt(sqrt(sqrt(dot(n,n))));
-      target=vec3(anchor)+delta*(gamutSmoothUnitLimit(demand)/demand);
+  vec3 compressPrismOutput(vec3 formation) {
+    vec3 target=uPrismTarget*(uOutset*formation);
+    float y=xyzY(formation);
+    // Use the target's existing clip point as a luminance reference, not as
+    // the output color. Ease into recovery when signed RGB cancels Y.
+    vec3 visible=clamp(target,0.0,uCurve.x);
+    float visibleY=max(xyzY(uInset*(uTargetTo709*visible)),0.0);
+    // Magic numbers for saturated-color recovery (not a color-space standard):
+    // 0.85 sets the recovery floor to 85% of the clipped target's XYZ Y,
+    // not 85% of display peak. It replaced the darker 50% floor.
+    // 0.15 sets the smooth join's half-width, also relative to visibleY.
+    // It controls how gradually recovery kicks in and need not sum to 1
+    // with the floor fraction.
+    float floorY=0.85*visibleY;
+    float width=0.15*visibleY;
+    float recoveredY=max(y,floorY);
+    if(width>0.0) {
+      // Quadratic smooth max: joins both branches with matching slopes.
+      float overlap=max(width-abs(y-floorY),0.0)/width;
+      recoveredY+=0.25*width*overlap*overlap;
     }
-    return uTargetTo709*clamp(target,0.0,peak);
+    vec3 neutral=yNeutral(recoveredY);
+    vec3 origin=uPrismTarget*(uOutset*neutral);
+    if(any(lessThan(origin,vec3(0.0))) || any(greaterThan(origin,vec3(uCurve.x)))) return formation;
+    vec3 ray=formation-neutral;
+    vec3 delta=target-origin;
+    float demand=0.0;
+    for(int i=0;i<3;i++) {
+      if(delta[i]==0.0) continue;
+      float room=delta[i]<0.0 ? origin[i] : uCurve.x-origin[i];
+      if(room==0.0) return neutral;
+      // The cube boundary is the first face hit. Combining pressures with
+      // an L8 norm rounds off edges and corners, dulling saturated primaries.
+      demand=max(demand,abs(delta[i])/room);
+    }
+    if(demand==0.0) return formation;
+    float scale=gamutSmoothUnitLimit(demand)/demand;
+    return scale==1.0 ? formation : neutral+ray*scale;
   }
   float prismYHighlightRolloff(vec3 c) {
     float luminance=max(xyzY(c),0.0);
     float anchorY=max(xyzY(vec3(uGrade1.x)),E);
-    float relativeY=max(luminance/anchorY,1.0);
-    float position=clamp(log2(relativeY)/(2.75*log2(10.0)),0.0,1.0);
+    // Start three quarters of a stop below the anchor; keep the full-strength point fixed.
+    const float onsetOffset=0.75;
+    float relativeY=max(luminance/anchorY,exp2(-onsetOffset));
+    float position=clamp((log2(relativeY)+onsetOffset)/(2.75*log2(10.0)+onsetOffset),0.0,1.0);
     return position*position*position*(position*(position*6.0-15.0)+10.0);
   }
   float prismYHighlightSatScale(float rolloff) {
     float highlightRolloff=rolloff*rolloff*(0.5*rolloff+0.5);
     return 1.0+(uGrade0.y-1.0)*highlightRolloff*(2.0/3.0);
   }
-  vec3 prismGradeOnly(vec3 c) {
-    // Preserve signed formation values until the output gamut mapping stage.
-    float highlightRolloff=prismYHighlightRolloff(c);
-    float highlightScale=prismYHighlightSatScale(highlightRolloff);
-    if (uGrade0.x != 1.0) c=chromaScaleSelected(c,uGrade0.x,uChromaSpace);
-    if (uGrade0.y != 1.0) c=chromaScaleSelected(c,highlightScale,uChromaSpace);
-    if (uGrade0.z > 0.0) {
-      if(uChromaSpace==1) c=blowoutMB(c,highlightRolloff);
-      else {
-        float adaptive=max(xyzY(vec3(uGrade1.x)),E);
-        float prePeak=max(xyzY(vec3(uGrade1.x*uCurve.x/max(uGrade1.y,E))),E);
-        float peakAvailability=1.0/(1.0+prePeak/adaptive);
-        float blowoutStrength=clamp(uGrade0.z*highlightRolloff,0.0,1.0);
-        float availability=mix(1.0,peakAvailability,blowoutStrength);
-        c=chromaScale(c,availability);
+  vec3 prismChromaAfter(vec3 rendered, float rolloff) {
+    float strength=clamp(uGrade0.z*rolloff,0.0,1.0);
+    float availability=mix(1.0,1.0/(1.0+uCurve.x/max(uGrade1.y,E)),strength);
+    float amount=uGrade0.x*prismYHighlightSatScale(rolloff)*availability;
+    if(abs(amount-1.0)<0.00001) return rendered;
+    // Grade in formation RGB. Project the ray into the target only for the hull test.
+    vec3 neutral=yNeutral(xyzY(rendered));
+    vec3 direction=rendered-neutral;
+    // Measure the ray against Prism's nonnegative RGB hull, not the display cube.
+    if(amount>1.0 && all(greaterThanEqual(neutral,vec3(0.0)))) {
+      float formationBoundary=1e30;
+      for(int i=0;i<3;i++) {
+        if(direction[i]<0.0) formationBoundary=min(formationBoundary,neutral[i]/-direction[i]);
+      }
+      if(formationBoundary<1e29) {
+        // The boundary is in units of current chroma (the input is at t=1).
+        // Compress only the requested increase; never pull an already-outside
+        // color toward neutral just because saturation was increased.
+        float headroom=max(formationBoundary-1.0,0.0), increase=amount-1.0;
+        amount=1.0+(headroom>0.0 ? headroom*increase/length(vec2(increase,headroom)) : 0.0);
       }
     }
-    c=vec3(tonalOne(c.r),tonalOne(c.g),tonalOne(c.b));
-    return c;
+    // The output compressor needs the uncapped ray; clip modes use a hard cap.
+    if(uPrismGamut==2) {
+      vec3 origin=uPrismTarget*(uOutset*neutral), delta=uPrismTarget*(uOutset*direction);
+      if(all(greaterThanEqual(origin,vec3(0.0))) && all(lessThanEqual(origin,vec3(uCurve.x)))) {
+        float boundary=1e30;
+        for(int i=0;i<3;i++) {
+          if(delta[i]<0.0) boundary=min(boundary,origin[i]/-delta[i]);
+          else if(delta[i]>0.0) boundary=min(boundary,(uCurve.x-origin[i])/delta[i]);
+        }
+        amount=min(amount,boundary);
+      }
+    }
+    return neutral+direction*amount;
   }
   vec3 prismMap(vec3 input709) {
-    if(uPrismGamut==2) input709=uTargetTo709*max(uPrismTarget*input709,vec3(0.0));
-    vec3 c=prismGradeOnly(uInset*input709);
+    vec3 c=uInset*input709;
+    float rolloff=prismYHighlightRolloff(c);
+    c=vec3(tonalOne(c.r),tonalOne(c.g),tonalOne(c.b));
     c=vec3(shoulderOne(c.r),shoulderOne(c.g),shoulderOne(c.b));
     // Match RenoDX math::ZeroNaN: clear NaNs per channel after the outset.
+    c=prismChromaAfter(c,rolloff);
+    if(uPrismGamut==1) c=compressPrismOutput(c);
     vec3 output709=uOutset*c;
-    if(uPrismGamut==1) output709=compressPrismGamut(output709);
-    else if(uPrismGamut==2) output709=uTargetTo709*clamp(uPrismTarget*output709,0.0,max(uCurve.x,0.000001));
+    if(uPrismGamut>=1) {
+      float peak=max(uCurve.x,0.000001);
+      vec3 target=uPrismTarget*output709;
+      output709=uTargetTo709*clamp(target,0.0,peak);
+    }
     return zeroNaN(output709);
   }
   ${PSYCHO35_GLSL}
@@ -327,7 +320,7 @@
     program=gl.createProgram(); gl.attachShader(program,v); gl.attachShader(program,f); gl.linkProgram(program);
     if (!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
     gl.deleteShader(v); gl.deleteShader(f); gl.useProgram(program);
-    for (const name of ['uToneMapper','uReferenceLut','uToEGamut','uHableWhite','uWhiteClip','uPsychoA','uPsychoB','uPsychoC','uPsychoMode','uOutputLinear','uImage','uSrc709','uInset','uOutset','uYWeights','uNeutral','uNeutralInvY','uWorkingToLMS','uLMSToWorking','uChromaSpace','uContrastMode','uGrade0','uGrade1','uGrade2','uCurve','uGamutWarning','uGamutMatrix','uPrismGamut','uPrismTarget','uTargetTo709','uSplit']) u[name]=gl.getUniformLocation(program,name);
+    for (const name of ['uToneMapper','uReferenceLut','uToEGamut','uHableWhite','uWhiteClip','uShoulderMode','uPsychoA','uPsychoB','uPsychoC','uPsychoMode','uOutputLinear','uImage','uSrc709','uInset','uOutset','uYWeights','uNeutral','uNeutralInvY','uContrastMode','uGrade0','uGrade1','uGrade2','uCurve','uGamutWarning','uGamutMatrix','uPrismGamut','uPrismTarget','uTargetTo709','uSplit']) u[name]=gl.getUniformLocation(program,name);
     texture=gl.createTexture(); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texture);
     const floatFilter=gl.getExtension('OES_texture_float_linear')?gl.LINEAR:gl.NEAREST;
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,floatFilter);
@@ -546,6 +539,7 @@
       gl.useProgram(program);
       if ((tone===3 || tone===4) && !referenceLuts[tone]) { loadReferenceLut(tone); return; }
       gl.uniform1f(u.uWhiteClip,Math.max(.001,Number($('whiteClip').value)||100));
+      gl.uniform1i(u.uShoulderMode,Number($('shoulderMode').value));
       gl.uniform1i(u.uToneMapper,tone); gl.uniform1f(u.uHableWhite,Math.max(.01,Number($('hableWhite').value)||11.2));
       gl.uniform4f(u.uPsychoA,...['psyHighlights','psyShadows','psyContrast','psyPurity'].map(id=>Number($(id).value)));
       gl.uniform4f(u.uPsychoB,Number($('psyCompression').value),Number($('psyAnchorIn').value),Number($('psyAnchorOut').value),Number($('psyFitPower').value));
@@ -557,9 +551,6 @@
       gl.uniformMatrix3fv(u.uSrc709,false,mat(sourceChoice==='auto'?autoSource.matrix:srcConversions[sourceChoice]));
       gl.uniformMatrix3fv(u.uInset,false,mat(inset));
       gl.uniformMatrix3fv(u.uOutset,false,mat(outset));
-      gl.uniformMatrix3fv(u.uWorkingToLMS,false,mat(prism.w2lms));
-      gl.uniformMatrix3fv(u.uLMSToWorking,false,mat(prism.lms2w));
-      gl.uniform1i(u.uChromaSpace,$('chromaSpace').value==='mb'?1:0);
       gl.uniform1i(u.uContrastMode,$('contrastMode').value==='pow'?1:0);
       gl.uniform3fv(u.uYWeights,new Float32Array(weights));
       gl.uniform3fv(u.uNeutral,new Float32Array(neutral));
@@ -569,8 +560,8 @@
       gl.uniform4f(u.uGrade2,g.highlightContrast,g.shadowContrast,g.highlights,g.shadows);
       gl.uniform3f(u.uCurve,peak,Math.max(1,Number($('compression').value)||1),exp);
       const prismGamut=$('prismGamut').value;
-      const gamutTarget=prismGamut.startsWith('clip-')?prismGamut.slice(5):prismGamut;
-      gl.uniform1i(u.uPrismGamut,prismGamut==='off'?0:prismGamut.startsWith('clip-')?2:1);
+      const parts=prismGamut.split('-'),prefix=parts.length>1?parts[0]:'',gamutTarget=parts.length>1?parts[1]:prismGamut;
+      gl.uniform1i(u.uPrismGamut,prismGamut==='off'?0:prefix==='output'?2:1);
       gl.uniformMatrix3fv(u.uPrismTarget,false,mat(gamutTarget==='off'?I3:inv3(srcConversions[gamutTarget])));
       gl.uniformMatrix3fv(u.uTargetTo709,false,mat(gamutTarget==='off'?I3:srcConversions[gamutTarget]));
       const warningGamut=$('gamutWarning').value;
@@ -642,7 +633,6 @@
   }
   $('previousEXR').addEventListener('click',()=>stepImage(-1));
   $('nextEXR').addEventListener('click',()=>stepImage(1));
-  $('refreshEXR').addEventListener('click',()=>refresh());
   $('exrSelect').addEventListener('change',loadEXR);
   $('sourceGamut').addEventListener('input',()=>{updateSourceStatus();window.updatePrismPreview()});
   for (const id of ['gamutWarning','splitPosition','prismGamut']) {

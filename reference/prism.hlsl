@@ -1,60 +1,60 @@
 #ifndef RENODX_MOD_PRISM_HLSL_
 #define RENODX_MOD_PRISM_HLSL_
 
-#include "../../../shaders/color.hlsl"
-#include "../../../shaders/color/macleod_boynton.hlsl"
-#include "../../../shaders/color/gamut.hlsl"
 #include "../../../shaders/tonemap/neutwo.hlsl"
 #include "../../../shaders/math.hlsl"
+#include "../../../shaders/color/rgb.hlsl"
 
 // Prism tone mapping. This file is intended to live directly in a RenoDX mod folder.
 // Public entry points accept and return linear BT.709.
 //
 // Primary authoring resolves the gamut hull, white point, primary controls,
-// matrices, and XYZ Y basis before shader execution. The CPU solver can emit
-// either an exact working-basis/inverse pair or an AgX-like independent
-// inset/outset formation pair. The shader consumes only the resolved data.
+// matrices, and XYZ Y basis before shader execution. The primary authoring tool
+// resolves an inward inset and its inverse outset; the shader consumes the data.
 
 namespace renodx {
 namespace tonemap {
 namespace prism {
 
-static const int CHROMA_SPACE_PRISM = 0;
-static const int CHROMA_SPACE_MACLEOD_BOYNTON = 1;
 static const int CONTRAST_FUNCTION_ANCHORED = 0;
 static const int CONTRAST_FUNCTION_POW = 1;
-static const int GAMUT_MODE_OFF = 0;
-static const int GAMUT_MODE_OUTPUT_COMPRESS = 1;
-static const int GAMUT_MODE_CLIP = 2;
+static const int SHOUDER_CINFINITY_ROLLOFF = 0;
+static const int SHOULDER_CINFINITY_REINHARD = 1;
+static const int GAMUT_COMPRESSION_BT709 = 0;
+static const int GAMUT_COMPRESSION_P3 = 1;
+static const int GAMUT_COMPRESSION_BT2020 = 2;
 
-float3x3 MatrixFromRows(float4 row0, float4 row1, float4 row2) {
-  return float3x3(
-      row0.x, row0.y, row0.z,
-      row1.x, row1.y, row1.z,
-      row2.x, row2.y, row2.z);
-}
+// Prism Default primaries: BT.2020, D65, with the authored inset and inverse.
+// Override the complete formation data together when using custom primaries.
+#define PRISM_DEFAULT_INSET float3x3( \
+  0.549737516f, 0.371638297f, 0.078624190f, \
+  0.139220197f, 0.719788111f, 0.140991690f, \
+  0.089362351f, 0.175562933f, 0.735074705f)
+#define PRISM_DEFAULT_OUTSET float3x3( \
+  2.094701286f, -1.077278804f, -0.017422490f, \
+  -0.372709243f, 1.649163258f, -0.276454015f, \
+  -0.165634190f, -0.262917185f, 1.428551392f)
+// Formation RGB to XYZ, corresponding to the default inset and outset.
+#define PRISM_DEFAULT_INSET_TO_XYZ float3x3( \
+  0.700666760f, 0.098003586f, 0.151785581f, \
+  0.166907707f, 0.931377814f, -0.098285521f, \
+  -0.161373328f, -0.074164267f, 1.324595363f)
 
 struct Config {
   // Display and tonal reference values.
-  float3 tone_map_peak;
-  float diffuse_white_nits;
+  float tone_map_peak;
   float3 anchor_in;
   float3 anchor_out;
 
-  // Resolved formation data. In normal working-basis mode these matrices are
-  // exact inverses. In AgX-like mode they are intentionally independent.
+  // Resolved formation data: outset is the inverse of inset.
   float3x3 inset_matrix;
   float3x3 outset_matrix;
 
-  // Precomputed by the CPU Prism solver or passed via helper function.
+  // Precomputed by the primary authoring tool or supplied by the integration.
   float3 y_weights;
-  float3 neutral_axis;
-  float neutral_axis_y_rcp;
-  float3x3 working_to_lms_matrix;
-  float3x3 lms_to_working_matrix;
 
   // Tone-map shoulder configuration.
-  float tone_map_compression_strength;
+  float cinfinite_rolloff_compression_strength;
   int contrast_function;
 
   // Grading controls.
@@ -68,36 +68,23 @@ struct Config {
   float highlight_contrast;
   float shadow_contrast;
 
-  // Working-space selectors.
-  int saturation_space;
-  int highlight_saturation_space;
-  int blowout_space;
-
-  // Gamut mode constants above select clip/compression stage(s).
-  // Matrices convert linear BT.709 and target RGB.
-  int gamut_compression_enabled;
-  float3x3 bt709_to_target;
-  float3x3 target_to_bt709;
+  int gamut_compression_mode;
   float tone_map_white_clip;
+  int shoulder_mode;
 };
 
 namespace config {
 
-// Construction path for CPU-resolved Prism primary data.
+// Supply all formation arguments together to override Prism Default primaries.
 Config CreateResolved(
-    float3 tone_map_peak,
-    float diffuse_white_nits,
-    float3 anchor_in,
-    float3 anchor_out,
-    float3x3 inset_matrix,
-    float3x3 outset_matrix,
-    float3 y_weights,
-    float3 neutral_axis,
-    float neutral_axis_y_rcp,
-    float3x3 working_to_lms_matrix,
-    float3x3 lms_to_working_matrix,
-    float tone_map_compression_strength = 1.5f,
-    int contrast_function = CONTRAST_FUNCTION_ANCHORED,
+    float tone_map_peak,
+    float3 anchor_in = 0.18f,
+    float3 anchor_out = 0.18f,
+    float3x3 inset_matrix = PRISM_DEFAULT_INSET,
+    float3x3 outset_matrix = PRISM_DEFAULT_OUTSET,
+    float3x3 inset_to_xyz = PRISM_DEFAULT_INSET_TO_XYZ,
+    float cinfinite_rolloff_compression_strength = 1.5f,
+    int contrast_function = CONTRAST_FUNCTION_POW,
     float highlights = 1.f,
     float shadows = 1.f,
     float contrast = 1.f,
@@ -107,23 +94,18 @@ Config CreateResolved(
     float flare = 0.f,
     float highlight_contrast = 1.f,
     float shadow_contrast = 1.f,
-    int saturation_space = CHROMA_SPACE_MACLEOD_BOYNTON,
-    int highlight_saturation_space = CHROMA_SPACE_MACLEOD_BOYNTON,
-    int blowout_space = CHROMA_SPACE_MACLEOD_BOYNTON,
-    float tone_map_white_clip = 100.f) {
+    float tone_map_white_clip = 100.f,
+    int shoulder_mode = SHOULDER_CINFINITY_REINHARD,
+    // Compress to BT.709 for SDR or Display P3 for HDR (default).
+    int gamut_compression_mode = GAMUT_COMPRESSION_P3) {
   const Config config = {
       tone_map_peak,
-      diffuse_white_nits,
       anchor_in,
       anchor_out,
       inset_matrix,
       outset_matrix,
-      y_weights,
-      neutral_axis,
-      neutral_axis_y_rcp,
-      working_to_lms_matrix,
-      lms_to_working_matrix,
-      tone_map_compression_strength,
+      inset_to_xyz[1],
+      cinfinite_rolloff_compression_strength,
       contrast_function,
       highlights,
       shadows,
@@ -134,13 +116,9 @@ Config CreateResolved(
       flare,
       highlight_contrast,
       shadow_contrast,
-      saturation_space,
-      highlight_saturation_space,
-      blowout_space,
-      0,
-      float3x3(1,0,0,0,1,0,0,0,1),
-      float3x3(1,0,0,0,1,0,0,0,1),
-      tone_map_white_clip
+      gamut_compression_mode,
+      tone_map_white_clip,
+      shoulder_mode
   };
   return config;
 }
@@ -162,12 +140,10 @@ float XYZY(float3 color, Config config) {
   return dot(color, config.y_weights);
 }
 
-// Returns the point on the resolved Prism-space neutral axis with the
-// requested XYZ Y. The CPU solver precomputes both the axis and its XYZ Y
-// normalization for the selected authoring white.
+// The authored white maps to equal formation RGB. Scale it to the requested Y.
 float3 YNeutral(float y, Config config) {
-  return config.neutral_axis
-         * (y * config.neutral_axis_y_rcp);
+  const float neutral = y / dot(config.y_weights, 1.f.xxx);
+  return neutral.xxx;
 }
 
 // Scales the residual orthogonal to the XYZ Y functional.
@@ -205,7 +181,7 @@ float3 ApplyAnchoredTonalGrading(
     float shadow_contrast = 1.f,
     float highlights = 1.f,
     float shadows = 1.f,
-    int contrast_function = CONTRAST_FUNCTION_ANCHORED) {
+    int contrast_function = CONTRAST_FUNCTION_POW) {
   [branch]
   if (contrast == 1.f
       && flare == 0.f
@@ -335,7 +311,7 @@ float3 ApplyAnchoredPowContrast(
   return sign(normalized) * pow(max(magnitude, 1e-30f), exponent) * anchor_out;
 }
 
-// White-clip C-infinity rolloff from UE Extended. At the endpoints use
+// White-clip C-infinity rolloff. At the endpoints use
 // explicit branches to avoid zero/infinity indeterminacies.
 float ApplyAnchoredCInfinityShoulder(float color, float peak, float anchor, float compression_strength, float white_clip) {
   const float magnitude = abs(color);
@@ -352,134 +328,54 @@ float ApplyAnchoredCInfinityShoulder(float color, float peak, float anchor, floa
   const float transition = denominator > 0.f ? (distance / clip_range) * (weight / denominator) : 1.f;
   return sign(color) * mad(peak - clip, transition, magnitude);
 }
-float3 ApplyAnchoredCInfinityShoulder(float3 color, float3 peak, float3 anchor, float compression_strength, float white_clip) {
-  return float3(ApplyAnchoredCInfinityShoulder(color.x, peak.x, anchor.x, compression_strength, white_clip),
-                ApplyAnchoredCInfinityShoulder(color.y, peak.y, anchor.y, compression_strength, white_clip),
-                ApplyAnchoredCInfinityShoulder(color.z, peak.z, anchor.z, compression_strength, white_clip));
+float3 ApplyAnchoredCInfinityShoulder(float3 color, float peak, float3 anchor, float compression_strength, float white_clip) {
+  return float3(ApplyAnchoredCInfinityShoulder(color.x, peak, anchor.x, compression_strength, white_clip),
+                ApplyAnchoredCInfinityShoulder(color.y, peak, anchor.y, compression_strength, white_clip),
+                ApplyAnchoredCInfinityShoulder(color.z, peak, anchor.z, compression_strength, white_clip));
 }
 
-// Pre-tonal chroma grading ----------------------------------------------------
-// Chroma shaping happens before contrast / flare / highlights /
-// shadows. anchor_in is therefore the adaptation/purity pivot for this stage.
-// anchor_out supplies the mapped tonal pivot and C-infinity shoulder anchor.
-
-float3 WorkingToLMS(float3 color, Config config) {
-  return mul(config.working_to_lms_matrix, color);
+// Reinhard core, smoothly joined to identity and a finite white-clip plateau.
+float ApplyReinhardCInfinityShoulder(float color, float peak, float anchor, float white_clip) {
+  const float magnitude = abs(color);
+  peak = max(peak, anchor + 1e-6f);
+  const float clip = max(white_clip, peak + max(peak * 1e-6f, 1e-6f));
+  if (magnitude <= anchor) return color;
+  if (magnitude >= clip) return sign(color) * peak;
+  const float range = peak - anchor, length = clip - anchor, distance = magnitude - anchor;
+  const float t = distance / length;
+  const float q = log(2.f) * (2.f * t - 1.f) / (t * (1.f - t));
+  const float log_warp = log(distance / range) + max(q, 0.f) + log(1.f + exp(-abs(q)));
+  const float log_base = max(log_warp, 0.f) + log(1.f + exp(-abs(log_warp)));
+  const float reinhard = range * (1.f - exp(-log_base));
+  const float start_position = distance / min(range / 16.f, length * .25f);
+  const float start = start_position >= 1.f ? 1.f : ComputeCInfinityTransition(start_position);
+  return sign(color) * (anchor + lerp(distance, reinhard, start));
+}
+float3 ApplyReinhardCInfinityShoulder(float3 color, float peak, float3 anchor, float white_clip) {
+  return float3(ApplyReinhardCInfinityShoulder(color.x, peak, anchor.x, white_clip),
+                ApplyReinhardCInfinityShoulder(color.y, peak, anchor.y, white_clip),
+                ApplyReinhardCInfinityShoulder(color.z, peak, anchor.z, white_clip));
 }
 
-float3 LMSToWorking(float3 lms, Config config) {
-  return mul(config.lms_to_working_matrix, lms);
-}
-
-// Express the post-tonal peak in the pre-tonal anchor domain while preserving
-// the configured peak / anchor_out ratio. This keeps blowout behavior stable
-// when anchor_in and anchor_out differ.
-float3 GetPreTonalPeak(Config config) {
-  const float3 peak_over_output_anchor =
-      renodx::math::DivideSafe(
-          config.tone_map_peak,
-          config.anchor_out,
-          1.f.xxx);
-  return config.anchor_in * peak_over_output_anchor;
-}
-
-float3 ToAdaptiveRelativeWeightedLMS(
-    float3 lms_input,
-    float3 adaptive_neutral_lms) {
-  return renodx::math::DivideSafe(
-      renodx::color::macleod_boynton::WeighLMS(lms_input),
-      adaptive_neutral_lms,
-      0.f.xxx);
-}
-
-float3 FromAdaptiveRelativeWeightedLMS(
-    float3 lms_weighted_relative,
-    float3 adaptive_neutral_lms) {
-  return lms_weighted_relative * max(adaptive_neutral_lms, 1e-6f.xxx);
-}
-
-// Adaptive-relative MacLeod-Boynton purity scaling: normalize around the
-// current adaptive LMS neutral, scale MB chromaticity away from its neutral,
-// then restore the adaptive state and unweight LMS.
-float3 ApplyMacLeodBoyntonPurity(
-    float3 color,
-    float purity_scale,
-    Config config) {
-  if (abs(purity_scale - 1.f) <= 1e-5f) return color;
-
-  const float3 lms_input = WorkingToLMS(color, config);
-  const float3 adaptive_neutral_lms =
-      max(WorkingToLMS(config.anchor_in, config), 1e-6f.xxx);
-
-  const float3 relative_weighted =
-      ToAdaptiveRelativeWeightedLMS(
-          lms_input,
-          adaptive_neutral_lms);
-
-  float3 mb =
-      renodx::color::macleod_boynton::from::WeightedLMS(
-          relative_weighted);
-
-  const float3 mb_neutral =
-      renodx::color::macleod_boynton::from::LMS(1.f.xxx);
-
-  // Intersect the adaptive-relative MB ray with the working RGB hull. At
-  // fixed L+M, working RGB is linear along the ray, even for a primary at infinity.
-  if (purity_scale > 1.f && mb.z > renodx::color::gamut::EPSILON) {
-    const float2 direction = mb.xy - mb_neutral.xy;
-    if (dot(direction, direction) > renodx::color::gamut::MB_NEAR_WHITE_EPSILON) {
-      const float3 origin = LMSToWorking(renodx::color::macleod_boynton::UnweighLMS(
-          FromAdaptiveRelativeWeightedLMS(float3(mb_neutral.x, 1.f - mb_neutral.x, mb_neutral.y), adaptive_neutral_lms)), config);
-      const float3 delta = LMSToWorking(renodx::color::macleod_boynton::UnweighLMS(
-          FromAdaptiveRelativeWeightedLMS(float3(direction.x, -direction.x, direction.y), adaptive_neutral_lms)), config);
-      if (all(origin >= -1e-6f.xxx)) {
-        float boundary = 1e30f;
-        [unroll] for (int i = 0; i < 3; ++i) {
-          if (delta[i] < 0.f) boundary = min(boundary, max(origin[i], 0.f) / -delta[i]);
-        }
-        if (boundary < 1e29f) {
-          const float headroom = max(boundary - 1.f, 0.f);
-          purity_scale = 1.f + (headroom > 0.f ? renodx::tonemap::Neutwo(purity_scale - 1.f, headroom) : 0.f);
-        }
-      }
-    }
-  }
-  mb.xy = lerp(mb_neutral.xy, mb.xy, purity_scale);
-
-  const float3 relative_weighted_out =
-      renodx::color::macleod_boynton::WeightedLMSFromMacleodBoynton(mb);
-
-  const float3 lms_out =
-      renodx::color::macleod_boynton::UnweighLMS(
-          FromAdaptiveRelativeWeightedLMS(
-              relative_weighted_out,
-              adaptive_neutral_lms));
-
-  return LMSToWorking(lms_out, config);
-}
+// Post-shoulder chroma grading, driven by the original scene luminance.
 
 float3 ApplyChromaScale(
     float3 color,
     float chroma_scale,
-    int chroma_space,
     Config config) {
   if (abs(chroma_scale - 1.f) <= 1e-5f) return color;
-
-  [branch]
-  if (chroma_space == CHROMA_SPACE_MACLEOD_BOYNTON) {
-    return ApplyMacLeodBoyntonPurity(color, chroma_scale, config);
-  }
 
   return ApplyYChromaScale(color, chroma_scale, config);
 }
 
-// Control Resonant's anchor-relative, 2.75-decade smootherstep response,
-// evaluated on Prism's XYZ Y basis before any chroma adjustment.
+// Control Resonant's anchor-relative smootherstep on Prism's XYZ Y basis.
+// Start three quarters of a stop below the anchor; keep the full-strength point fixed.
 float ComputePrismYHighlightRolloff(float3 color, Config config) {
+  const float onset_offset = 0.75f;
   const float luminance = max(0.f, XYZY(color, config));
   const float anchor_luminance = max(XYZY(config.anchor_in, config), 0.000001f);
-  const float relative_luminance = max(luminance / anchor_luminance, 1.f);
-  const float position = saturate(log2(relative_luminance) / (2.75f * log2(10.f)));
+  const float relative_luminance = max(luminance / anchor_luminance, exp2(-onset_offset));
+  const float position = saturate((log2(relative_luminance) + onset_offset) / (2.75f * log2(10.f) + onset_offset));
   return position * position * position
          * mad(position, mad(6.f, position, -15.f), 10.f);
 }
@@ -492,74 +388,11 @@ float ComputeHighlightSaturationScale(float highlight_rolloff, Config config) {
              1.f);
 }
 
-// Prism-primary blowout retains peak-based per-cone bleaching. The updated
-// luminance rolloff controls where that bleaching becomes active.
-float3 ApplyPrismBlowout(float3 color, float highlight_rolloff, Config config) {
-  if (config.dechroma == 0.f) return color;
-
-  const float adaptive_y = max(XYZY(config.anchor_in, config), 0.000001f);
-  const float peak_y = max(XYZY(GetPreTonalPeak(config), config), 0.000001f);
-  const float full_bleach_availability = 1.f / (1.f + (peak_y / adaptive_y));
-  const float blowout_strength = saturate(config.dechroma * highlight_rolloff);
-  const float availability = lerp(1.f, full_bleach_availability, blowout_strength);
-  return ApplyYChromaScale(color, availability, config);
-}
-
-// MacLeod-Boynton/LMS blowout: use per-cone bleaching availability and pull
-// the cone response toward the adaptive neutral at equal total cone energy.
-// Prism's gamut boundary handling remains in the purity operation/final pass.
-float3 ApplyMacLeodBoyntonBlowout(float3 color, float highlight_rolloff, Config config) {
-  if (config.dechroma == 0.f) return color;
-
-  float3 lms = WorkingToLMS(color, config);
-  const float3 adaptive_neutral_lms = max(WorkingToLMS(config.anchor_in, config), 1e-6f.xxx);
-  const float3 peak_lms = max(WorkingToLMS(GetPreTonalPeak(config), config), 0.f.xxx);
-  float3 availability = 1.f.xxx / (1.f.xxx + (peak_lms / adaptive_neutral_lms));
-  const float blowout_strength = saturate(config.dechroma * highlight_rolloff);
-  availability = lerp(1.f.xxx, availability, blowout_strength);
-
-  const float input_energy = lms.x + lms.y + lms.z;
-  const float white_energy = adaptive_neutral_lms.x + adaptive_neutral_lms.y + adaptive_neutral_lms.z;
-  const float3 white_at_energy = adaptive_neutral_lms
-      * renodx::math::DivideSafe(input_energy, white_energy, 0.f);
-  const float3 delta = (lms - white_at_energy) * availability;
-  return LMSToWorking(max(0.f.xxx, white_at_energy + delta), config);
-}
-
-float3 ApplyChromaGrading(float3 color, Config config) {
-  // Compute one Prism XYZ Y rolloff from the untouched, sanitized signal.
-  // Reuse it for highlight saturation and peak-based blowout strength.
-  const float highlight_rolloff = ComputePrismYHighlightRolloff(color, config);
-  const float highlight_scale = ComputeHighlightSaturationScale(highlight_rolloff, config);
-
-  // 1) Global saturation / purity.
-  color = ApplyChromaScale(
-      color,
-      config.saturation,
-      config.saturation_space,
-      config);
-
-  // 2) Highlight saturation, using the shared anchored response curve and an
-  // independently selectable, gamut-aware chroma basis.
-  if (config.highlight_saturation != 1.f) {
-    color = ApplyChromaScale(
-        color,
-        highlight_scale,
-        config.highlight_saturation_space,
-        config);
-  }
-
-  // 3) Blowout / bleaching.
-  if (config.dechroma != 0.f) {
-    [branch]
-    if (config.blowout_space == CHROMA_SPACE_MACLEOD_BOYNTON) {
-      color = ApplyMacLeodBoyntonBlowout(color, highlight_rolloff, config);
-    } else {
-      color = ApplyPrismBlowout(color, highlight_rolloff, config);
-    }
-  }
-
-  return color;
+float3 ApplyChromaGrading(float3 color, float highlight_rolloff, Config config) {
+  const float strength = saturate(config.dechroma * highlight_rolloff);
+  const float availability = lerp(1.f, 1.f / (1.f + config.tone_map_peak / max(config.anchor_out.x, 1e-9f)), strength);
+  const float amount = config.saturation * ComputeHighlightSaturationScale(highlight_rolloff, config) * availability;
+  return ApplyChromaScale(color, amount, config);
 }
 
 // Equivalent Witcher softplus limiter, rearranged to avoid cancellation.
@@ -585,31 +418,55 @@ float GamutSmoothUnitLimit(float demand) {
   return lerp(near_zero, mapped_demand, transition);
 }
 
-// Apply radial L8 demand against both faces of the target display gamut.
-float3 CompressDisplayGamut(float3 output709, Config config) {
-  float3 target = mul(config.bt709_to_target, output709);
-  const float peak = max(config.tone_map_peak.x, 1e-6f);
-  // Target-space positive light preserves the original luminance anchor for
-  // all colors inside the target gamut, including wide-gamut colors.
-  const float3 positive709 = mul(config.target_to_bt709, max(target, 0.f.xxx));
-  const float anchor = clamp(dot(positive709, float3(0.2126390059f, 0.7151686788f, 0.0721923154f)), 0.f, peak);
-  const float3 delta = target - anchor.xxx;
-  const float3 demand3 = max(max(-delta, 0.f.xxx) / max(anchor, 1e-8f),
-                             max(delta, 0.f.xxx) / max(peak - anchor, 1e-8f));
-  const float demand_scale = max(demand3.x, max(demand3.y, demand3.z));
-  if (demand_scale > 0.f) {
-    float3 n = demand3 / demand_scale;
-    n *= n; n *= n;
-    const float demand = demand_scale * sqrt(sqrt(sqrt(dot(n,n))));
-    target = anchor.xxx + delta * (GamutSmoothUnitLimit(demand) / demand);
-  }
-  return mul(config.target_to_bt709, clamp(target, 0.f, peak));
+float3 BT709ToCompressionTarget(float3 color, int mode) {
+  if (mode == GAMUT_COMPRESSION_P3) return mul(renodx::color::BT709_TO_DISPLAYP3_MAT, color);
+  if (mode == GAMUT_COMPRESSION_BT2020) return mul(renodx::color::BT709_TO_BT2020_MAT, color);
+  return color;
 }
 
-// Apply chroma and anchored tonal grading in Prism space, without shoulder or outset.
-float3 ApplyGradingOnly(float3 color, Config config) {
-  color = ApplyChromaGrading(color, config);
+float3 CompressionTargetToBT709(float3 color, int mode) {
+  if (mode == GAMUT_COMPRESSION_P3) return mul(renodx::color::DISPLAYP3_TO_BT709_MAT, color);
+  if (mode == GAMUT_COMPRESSION_BT2020) return mul(renodx::color::BT2020_TO_BT709_MAT, color);
+  return color;
+}
 
+// Post-shoulder compression along a Prism RGB ray against the target cube.
+float3 CompressOutputGamut(float3 color, Config config) {
+  const float peak = max(config.tone_map_peak, 1e-6f);
+  const float3 target = BT709ToCompressionTarget(mul(config.outset_matrix, color), config.gamut_compression_mode);
+  const float y = XYZY(color, config);
+  const float3 visible = clamp(target, 0.f, peak);
+  const float visible_y = max(XYZY(mul(config.inset_matrix, CompressionTargetToBT709(visible, config.gamut_compression_mode)), config), 0.f);
+  // Magic numbers, not color-space standards: 0.85 is the recovery
+  // floor as a fraction of clipped target XYZ Y (not display peak).
+  // 0.15 is the smooth join's half-width, also relative to clipped Y.
+  // These values are independent and need not sum to 1.
+  const float floor_y = 0.85f * visible_y;
+  const float width = 0.15f * visible_y;
+  float recovered_y = max(y, floor_y);
+  if (width > 0.f) {
+    const float overlap = max(width - abs(y - floor_y), 0.f) / width;
+    recovered_y += 0.25f * width * overlap * overlap;
+  }
+  const float3 neutral = YNeutral(recovered_y, config);
+  const float3 origin = BT709ToCompressionTarget(mul(config.outset_matrix, neutral), config.gamut_compression_mode);
+  if (any(origin < 0.f) || any(origin > peak)) return color;
+  const float3 delta = target - origin;
+  float demand = 0.f;
+  [unroll] for (int i = 0; i < 3; ++i) {
+    if (delta[i] == 0.f) continue;
+    const float room = delta[i] < 0.f ? origin[i] : peak - origin[i];
+    if (room == 0.f) return neutral;
+    // The first cube face hit sets the limit; do not round off cube corners.
+    demand = max(demand, abs(delta[i]) / room);
+  }
+  if (demand == 0.f) return color;
+  const float scale = GamutSmoothUnitLimit(demand) / demand;
+  return scale == 1.f ? color : neutral + (color - neutral) * scale;
+}
+
+// Apply only tonal grading; chroma grading requires the shoulder result.
+float3 ApplyGradingOnly(float3 color, Config config) {
   color = ApplyAnchoredTonalGrading(
       color,
       config.anchor_in,
@@ -625,18 +482,19 @@ float3 ApplyGradingOnly(float3 color, Config config) {
   return color;
 }
 
-// Applies pre-tonal chroma grading, tonal grading, and the asymptotic
-// C-infinity shoulder to a color ALREADY in the configured formation basis.
+// Tonal grading, shoulder, then chroma, all in the formation basis.
 float3 ApplyWithShoulder(float3 color, Config config) {
+  const float highlight_rolloff = ComputePrismYHighlightRolloff(color, config);
   color = ApplyGradingOnly(color, config);
-  color = ApplyAnchoredCInfinityShoulder(
-      color,
-      config.tone_map_peak,
-      config.anchor_out,
-      config.tone_map_compression_strength,
+  if (config.shoulder_mode == SHOULDER_CINFINITY_REINHARD) {
+    color = ApplyReinhardCInfinityShoulder(color, config.tone_map_peak, config.anchor_out,
       config.tone_map_white_clip);
+  } else {
+    color = ApplyAnchoredCInfinityShoulder(color, config.tone_map_peak, config.anchor_out,
+        config.cinfinite_rolloff_compression_strength, config.tone_map_white_clip);
+  }
 
-  return color;
+  return ApplyChromaGrading(color, highlight_rolloff, config);
 }
 
 float3 Apply(float3 color, Config config) {
@@ -649,75 +507,18 @@ float3 Apply(float3 color, Config config) {
 //   formation = mul(inset_matrix, bt709);
 //   bt709     = mul(outset_matrix, formation);
 //
-// In WORKING_BASIS mode outset_matrix is the exact inverse of inset_matrix.
-// In AGX_INSET_OUTSET mode the two are independently authored formation
-// transforms and are intentionally not required to cancel.
+// outset_matrix is the inverse of inset_matrix.
 //
-// Optional display-gamut compression is disabled by default.
+// Output gamut compression defaults to Display P3; the return value is linear BT.709.
 float3 BT709(float3 bt709, Config config) {
-  if (config.gamut_compression_enabled == GAMUT_MODE_CLIP) {
-    bt709 = mul(config.target_to_bt709, max(mul(config.bt709_to_target, bt709), 0.f.xxx));
-  }
   float3 color = mul(config.inset_matrix, bt709);
   color = ApplyWithShoulder(color, config);
-  float3 output709 = mul(config.outset_matrix, color);
-  if (config.gamut_compression_enabled == GAMUT_MODE_OUTPUT_COMPRESS) {
-    output709 = CompressDisplayGamut(output709, config);
-  } else if (config.gamut_compression_enabled == GAMUT_MODE_CLIP) {
-    float3 target = mul(config.bt709_to_target, output709);
-    output709 = mul(config.target_to_bt709, clamp(target, 0.f, max(config.tone_map_peak.x, 1e-6f)));
-  }
+  color = CompressOutputGamut(color, config);
+  const float3 target = BT709ToCompressionTarget(mul(config.outset_matrix, color), config.gamut_compression_mode);
+  const float3 output709 = CompressionTargetToBT709(clamp(target, 0.f, max(config.tone_map_peak, 1e-6f)), config.gamut_compression_mode);
   return renodx::math::ZeroNaN(output709);
 }
 
-
-// RenoDX cbuffer wiring example:
-//
-// const float3x3 prism_inset = MatrixFromRows(
-//     shader_injection.prism_inset_0,
-//     shader_injection.prism_inset_1,
-//     shader_injection.prism_inset_2);
-// const float3x3 prism_outset = MatrixFromRows(
-//     shader_injection.prism_outset_0,
-//     shader_injection.prism_outset_1,
-//     shader_injection.prism_outset_2);
-// const float3x3 prism_to_lms = MatrixFromRows(
-//     shader_injection.prism_to_lms_0,
-//     shader_injection.prism_to_lms_1,
-//     shader_injection.prism_to_lms_2);
-// const float3x3 lms_to_prism = MatrixFromRows(
-//     shader_injection.prism_from_lms_0,
-//     shader_injection.prism_from_lms_1,
-//     shader_injection.prism_from_lms_2);
-//
-// Config prism_config = config::CreateResolved(
-//     peak,
-//     diffuse_white_nits,
-//     anchor_in,
-//     anchor_out,
-//     prism_inset,
-//     prism_outset,
-//     shader_injection.prism_y_weights.xyz,
-//     shader_injection.prism_neutral_axis.xyz,
-//     shader_injection.prism_y_weights.w,
-//     prism_to_lms,
-//     lms_to_prism,
-//     compression_strength,
-//     contrast_function,
-//     highlights,
-//     shadows,
-//     contrast,
-//     saturation,
-//     highlight_saturation,
-//     blowout,
-//     flare,
-//     highlight_contrast,
-//     shadow_contrast,
-//     saturation_space,
-//     highlight_saturation_space,
-//     blowout_space);
-//
-// color = BT709(color, prism_config);
 
 }  // namespace prism
 }  // namespace tonemap
