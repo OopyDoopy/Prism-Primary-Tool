@@ -79,7 +79,8 @@ pre{
 .previewMeasures{flex:1 1 340px;min-width:min(100%,300px);max-width:560px;display:grid;gap:14px}
 .previewMeasures .statusGrid{grid-template-columns:1fr}
 .previewMeasures .metric:nth-last-child(2){border-bottom:1px solid #252a30}
-.previewMeasures .plotLegend{gap:5px 10px}
+.gamutViews{flex:1 0 100%;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:14px}
+.gamutViews .plotLegend{gap:5px 10px}
 .previewCharts{flex:1 1 320px;min-width:min(100%,300px);max-width:480px;display:grid;gap:14px;align-content:start}
 
 .imageControls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:end;margin-bottom:12px}
@@ -247,7 +248,9 @@ pre{
     <table class="xyTable" style="margin-top:12px"><thead><tr><th>Primary</th><th>Inset x</th><th>Inset y</th></tr></thead><tbody id="primaryTable"></tbody></table>
     <table class="xyTable" style="margin-top:12px"><thead><tr><th>Axis</th><th>x</th><th>y</th><th>Y</th></tr></thead><tbody id="axisTable"></tbody></table>
   </div>
-  <div class="panel"><h2>CIE 1931 xy chromaticity</h2>
+      </aside>
+      <section class="gamutViews prismOnly" aria-label="Gamut views" style="order:1">
+    <div class="panel"><h2>CIE 1931 xy chromaticity</h2>
     <canvas id="cieXYPlot" width="800" height="800" aria-label="CIE xy diagram comparing authored and reference primary triangles and white points"></canvas>
     <div class="plotLegend"><span class="legendLine"><i></i>Authored gamut</span><span class="legendLine"><i class="dash"></i>Reference gamut</span></div>
   </div>
@@ -260,7 +263,8 @@ pre{
     <canvas id="ciePlot" width="1000" height="720" aria-label="Interactive CIE xyY gamut volume with RGB and secondary axis flights"></canvas>
     <div class="plotLegend"><span class="legendLine"><i></i>Authored gamut volume</span><span class="legendLine"><i class="dash"></i>Reference gamut</span><span class="legendLine"><i class="dot" style="background:#ff6262"></i>Red</span><span class="legendLine"><i class="dot" style="background:#62e887"></i>Green</span><span class="legendLine"><i class="dot" style="background:#6d8fff"></i>Blue</span><span class="legendLine"><i class="dot" style="background:#f4db4c"></i>Yellow</span><span class="legendLine"><i class="dot" style="background:#4de3d2"></i>Cyan</span><span class="legendLine"><i class="dot" style="background:#ed54bf"></i>Magenta</span></div>
     <small>Drag to rotate · scroll to zoom · double-click to reset. Vertical axis is luminance Y.</small>
-  </div>      </aside>
+  </div>
+      </section>
       <aside class="previewCharts prismOnly" aria-label="Response charts">
   <div class="panel compactChart">
     <h2>Prism Y purity / blowout response</h2>
