@@ -287,10 +287,17 @@
     }
     if(uToneMapper==2) { float y=dot(c,vec3(.2126390059,.7151686788,.0721923154)); return y>0.0 ? c*(uCurve.x/(1.0+y)) : vec3(0.0); }
     if(uToneMapper==5) return zeroNaN(psycho35(c));
-    vec3 q=uToneMapper==4 ? uToEGamut*c : c;
+    if(uToneMapper==3) {
+      // Signed asinh allocation, paired with tools/bake_aces13.py.
+      const float limit=4096.0, softness=0.01, edge=limit/softness;
+      vec3 x=min(abs(c),vec3(limit))/softness;
+      vec3 shaped=sign(c)*log(x+sqrt(x*x+1.0))/log(edge+sqrt(edge*edge+1.0));
+      return tetraLut(0.5+0.5*shaped);
+    }
+    vec3 q=uToEGamut*c;
     q=clamp((log2(max(q,vec3(exp2(-12.47393))))+12.47393)/25.0,0.0,1.0);
     vec3 v=tetraLut(q);
-    return uToneMapper==4 ? pow(max(v,vec3(0.0)),vec3(2.4)) : v;
+    return pow(max(v,vec3(0.0)),vec3(2.4));
   }
   vec3 encodeSRGB(vec3 c) {
     c=max(c,vec3(0.0));
@@ -509,7 +516,7 @@
   const referenceLuts={}, loadingLuts={};
   async function loadReferenceLut(tone) {
     if(loadingLuts[tone])return; loadingLuts[tone]=true;
-    try { const name=tone===3?'aces13.bin':'agx.bin', size=tone===3?65:57;
+    try { const name=tone===3?'aces13-signed.bin':'agx.bin', size=tone===3?97:57;
       const response=await fetch(name);if(!response.ok)throw Error('HTTP '+response.status);
       const bytes=await response.arrayBuffer();if(bytes.byteLength!==size**3*16)throw Error('Invalid transform data');
       const lut=gl.createTexture();gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_3D,lut);
