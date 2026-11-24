@@ -23,6 +23,15 @@ static const int SHOULDER_CINFINITY_REINHARD = 1;
 static const int GAMUT_COMPRESSION_BT709 = 0;
 static const int GAMUT_COMPRESSION_P3 = 1;
 static const int GAMUT_COMPRESSION_BT2020 = 2;
+static const int GAMUT_CLIP_BT709 = 3;
+static const int GAMUT_CLIP_P3 = 4;
+static const int GAMUT_CLIP_BT2020 = 5;
+
+bool IsGamutClipMode(int mode) {
+  return mode >= GAMUT_CLIP_BT709 && mode <= GAMUT_CLIP_BT2020;
+}
+
+float3 BT709ToCompressionTarget(float3 color, int mode);
 
 // Prism Default primaries: BT.2020, D65, with the authored inset and inverse.
 // Override the complete formation data together when using custom primaries.
@@ -162,6 +171,17 @@ float3 ApplyYChromaScale(float3 color, float chroma_scale, Config config) {
     if (boundary < 1e29f) {
       const float headroom = max(boundary - 1.f, 0.f);
       chroma_scale = 1.f + (headroom > 0.f ? renodx::tonemap::Neutwo(chroma_scale - 1.f, headroom) : 0.f);
+    }
+  }
+  if (IsGamutClipMode(config.gamut_compression_mode)) {
+    const float peak = max(config.tone_map_peak, 1e-6f);
+    const float3 origin = BT709ToCompressionTarget(mul(config.outset_matrix, neutral), config.gamut_compression_mode);
+    const float3 delta = BT709ToCompressionTarget(mul(config.outset_matrix, direction), config.gamut_compression_mode);
+    if (all(origin >= 0.f) && all(origin <= peak)) {
+      [unroll] for (int i = 0; i < 3; ++i) {
+        if (delta[i] < 0.f) chroma_scale = min(chroma_scale, origin[i] / -delta[i]);
+        else if (delta[i] > 0.f) chroma_scale = min(chroma_scale, (peak - origin[i]) / delta[i]);
+      }
     }
   }
   return mad(direction, chroma_scale, neutral);
@@ -419,12 +439,14 @@ float GamutSmoothUnitLimit(float demand) {
 }
 
 float3 BT709ToCompressionTarget(float3 color, int mode) {
+  if (IsGamutClipMode(mode)) mode -= GAMUT_CLIP_BT709;
   if (mode == GAMUT_COMPRESSION_P3) return mul(renodx::color::BT709_TO_DISPLAYP3_MAT, color);
   if (mode == GAMUT_COMPRESSION_BT2020) return mul(renodx::color::BT709_TO_BT2020_MAT, color);
   return color;
 }
 
 float3 CompressionTargetToBT709(float3 color, int mode) {
+  if (IsGamutClipMode(mode)) mode -= GAMUT_CLIP_BT709;
   if (mode == GAMUT_COMPRESSION_P3) return mul(renodx::color::DISPLAYP3_TO_BT709_MAT, color);
   if (mode == GAMUT_COMPRESSION_BT2020) return mul(renodx::color::BT2020_TO_BT709_MAT, color);
   return color;
@@ -513,7 +535,9 @@ float3 Apply(float3 color, Config config) {
 float3 BT709(float3 bt709, Config config) {
   float3 color = mul(config.inset_matrix, bt709);
   color = ApplyWithShoulder(color, config);
-  color = CompressOutputGamut(color, config);
+  if (!IsGamutClipMode(config.gamut_compression_mode)) {
+    color = CompressOutputGamut(color, config);
+  }
   const float3 target = BT709ToCompressionTarget(mul(config.outset_matrix, color), config.gamut_compression_mode);
   const float3 output709 = CompressionTargetToBT709(clamp(target, 0.f, max(config.tone_map_peak, 1e-6f)), config.gamut_compression_mode);
   return renodx::math::ZeroNaN(output709);
