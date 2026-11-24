@@ -1,5 +1,6 @@
 """Bake the browser's ACES 1.3 LUT with numpy and opencolorio==2.6.0."""
 
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ XYZ_FROM_709 = np.array([
 ])
 
 
-def processor():
+def processor(rgc=True):
     """Apply ACES RGC and SDR rendering to signed linear Rec.709."""
     chain = ocio.GroupTransform()
     to_xyz = np.eye(4)
@@ -27,9 +28,10 @@ def processor():
         style="UTILITY - ACES-AP0_to_CIE-XYZ-D65_BFD",
         direction=ocio.TRANSFORM_DIR_INVERSE,
     ))
-    chain.appendTransform(ocio.BuiltinTransform(
-        style="ACES-LMT - ACES 1.3 Reference Gamut Compression",
-    ))
+    if rgc:
+        chain.appendTransform(ocio.BuiltinTransform(
+            style="ACES-LMT - ACES 1.3 Reference Gamut Compression",
+        ))
     chain.appendTransform(ocio.BuiltinTransform(
          style=("ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65"
              " - SDR-VIDEO-REC709lim_1.1"),
@@ -39,15 +41,19 @@ def processor():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-rgc", action="store_true")
+    args = parser.parse_args()
     stops = np.linspace(-1, 1, SIZE) * np.arcsinh(LIMIT / SOFTNESS)
     domain = SOFTNESS * np.sinh(stops)
     b, g, r = np.meshgrid(domain, domain, domain, indexing="ij")
     rgba = np.ones((SIZE, SIZE, SIZE, 4), dtype=np.float32)
     rgba[..., 0], rgba[..., 1], rgba[..., 2] = r, g, b
-    processor().applyRGBA(rgba.reshape(-1, 4))
+    processor(rgc=not args.no_rgc).applyRGBA(rgba.reshape(-1, 4))
     if not np.isfinite(rgba).all():
         raise ValueError("Non-finite ACES output")
-    output = Path(__file__).resolve().parents[1] / "aces13-signed.bin"
+    name = "aces13-signed-no-rgc.bin" if args.no_rgc else "aces13-signed.bin"
+    output = Path(__file__).resolve().parents[1] / name
     rgba.astype("<f4", copy=False).tofile(output)
 
 

@@ -514,17 +514,17 @@
   }
   $('outputMode').addEventListener('change',selectOutput);
   const referenceLuts={}, loadingLuts={};
-  async function loadReferenceLut(tone) {
-    if(loadingLuts[tone])return; loadingLuts[tone]=true;
-    try { const name=tone===3?'aces13-signed.bin':'agx.bin', size=tone===3?97:57;
+  async function loadReferenceLut(name) {
+    if(loadingLuts[name])return; loadingLuts[name]=true;
+    try { const size=name==='agx.bin'?57:97;
       const response=await fetch(name);if(!response.ok)throw Error('HTTP '+response.status);
       const bytes=await response.arrayBuffer();if(bytes.byteLength!==size**3*16)throw Error('Invalid transform data');
       const lut=gl.createTexture();gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_3D,lut);
       gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_WRAP_R,gl.CLAMP_TO_EDGE);
       gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA32F,size,size,size,0,gl.RGBA,gl.FLOAT,new Float32Array(bytes));gl.activeTexture(gl.TEXTURE0);
-      referenceLuts[tone]=lut;window.updatePrismPreview();
-    } catch(e){status.textContent='Failed to load reference transform: '+e.message;console.error(e);} finally {delete loadingLuts[tone];}
+      referenceLuts[name]=lut;window.updatePrismPreview();
+    } catch(e){status.textContent='Failed to load reference transform: '+e.message;console.error(e);} finally {delete loadingLuts[name];}
   }
   let loaded=false;
   let scheduled=false;
@@ -544,7 +544,8 @@
       const aOut=tone===0?Math.max(Number($('anchorOut').value),.000001):tone===5?Math.max(Number($('psyAnchorOut').value),.000001):.000001;
       const peak=Math.max(previewPeak(),aOut+.000001);
       gl.useProgram(program);
-      if ((tone===3 || tone===4) && !referenceLuts[tone]) { loadReferenceLut(tone); return; }
+      const lutName=tone===3?($('acesRgc').value==='off'?'aces13-signed-no-rgc.bin':'aces13-signed.bin'):tone===4?'agx.bin':null;
+      if (lutName && !referenceLuts[lutName]) { loadReferenceLut(lutName); return; }
       gl.uniform1f(u.uWhiteClip,Math.max(.001,Number($('whiteClip').value)||100));
       gl.uniform1i(u.uShoulderMode,Number($('shoulderMode').value));
       gl.uniform1i(u.uToneMapper,tone); gl.uniform1f(u.uHableWhite,Math.max(.01,Number($('hableWhite').value)||11.2));
@@ -553,7 +554,7 @@
       gl.uniform2f(u.uPsychoC,Number($('psyConeExponent').value),Number($('psyGamutAmount').value));
       gl.uniform3i(u.uPsychoMode,Number($('psyTarget').value),Number($('psyFit').value),Number($('psyConditioning').value));
       gl.uniformMatrix3fv(u.uToEGamut,false,mat(m3mul(inv3(rgb2xyz({r:[.8,.3177],g:[.18,.9],b:[.065,-.0805]},P709.w)),M709XYZ)));
-      if(referenceLuts[tone]) {gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_3D,referenceLuts[tone]);gl.uniform1i(u.uReferenceLut,1);gl.activeTexture(gl.TEXTURE0);}
+      if(lutName) {gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_3D,referenceLuts[lutName]);gl.uniform1i(u.uReferenceLut,1);gl.activeTexture(gl.TEXTURE0);}
       const sourceChoice=$('sourceGamut').value;
       gl.uniformMatrix3fv(u.uSrc709,false,mat(sourceChoice==='auto'?autoSource.matrix:srcConversions[sourceChoice]));
       gl.uniformMatrix3fv(u.uInset,false,mat(inset));

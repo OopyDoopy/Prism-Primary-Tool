@@ -115,6 +115,7 @@ pre{
   <div class="panel">
     <div class="sectionHead"><h2>Output and tone</h2></div>
     <div class="selectorRow"><label>Tone mapper<select id="toneMapper"><option value="0">Prism</option><option value="1">Hable (Uncharted 2)</option><option value="2">Reinhard (luminance)</option><option value="3">ACES 1.3 (SDR reference)</option><option value="4">Blender AgX (SDR reference)</option><option value="5">PsychoV35</option></select></label></div>
+    <div class="selectorRow" id="acesRgcControl" hidden><label>Reference Gamut Compression (RGC)<select id="acesRgc"><option value="on">On</option><option value="off">Off</option></select></label></div>
     
     <div class="curveControls">
       <div class="curveControl prismOnly"><label for="shoulderMode">Prism shoulder</label><select id="shoulderMode"><option value="0">C∞ rolloff</option><option value="1" selected>C∞ Reinhard-based</option></select></div>
@@ -308,9 +309,9 @@ pre{
 </section>
 </main>
 
-<script src="authoring.js?v=gamut-views-1"></script>
+<script src="authoring.js?v=aces-rgc-1"></script>
 <script src="settings.js?v=recommended-curve-2"></script>
 <script src="tonemap.generated.js"></script>
-<script src="preview.js?v=aces13-signed-1"></script>
+<script src="preview.js?v=aces-rgc-1"></script>
 </body>
 </html>
